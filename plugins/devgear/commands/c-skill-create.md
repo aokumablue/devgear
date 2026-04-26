@@ -22,7 +22,7 @@ command: /c-skill-create
 ### ステップ1: 入力候補収集
 
 ```bash
-source "${DEVGEAR_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
+source "${CLAUDE_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
 collect_skill_create_inputs "${COMMITS:-200}"
 devgear_mem_search "<search query>" 3
 ```

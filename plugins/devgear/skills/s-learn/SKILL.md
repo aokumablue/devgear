@@ -52,8 +52,8 @@ project_id: "a1b2c3d4e5f6"
 ```json
 {
   "hooks": {
-    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 \"${DEVGEAR_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.skills.learn.observe pre"}]}],
-    "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 \"${DEVGEAR_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.skills.learn.observe post"}]}]
+    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.skills.learn.observe pre"}]}],
+    "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.skills.learn.observe post"}]}]
   }
 }
 ```

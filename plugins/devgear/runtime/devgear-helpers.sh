@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Shared helper functions for command docs.
 
-# Resolve the plugin root from DEVGEAR_PLUGIN_ROOT first, then this file's
+# Resolve the plugin root from CLAUDE_PLUGIN_ROOT first, then this file's
 # location. The helpers are usually sourced from command snippets.
 devgear_plugin_root() {
-  if [ -n "${DEVGEAR_PLUGIN_ROOT:-}" ]; then
-    printf '%s\n' "$DEVGEAR_PLUGIN_ROOT"
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    printf '%s\n' "$CLAUDE_PLUGIN_ROOT"
     return 0
   fi
 

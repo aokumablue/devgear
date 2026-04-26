@@ -107,8 +107,8 @@ def test_resolve_target_command_absolute_bash_script(tmp_path: Path) -> None:
 
 
 def test_resolve_target_command_relative_script_in_plugin_root(tmp_path: Path, monkeypatch) -> None:
-    """DEVGEAR_PLUGIN_ROOT 内の相対パス スクリプトを解決します。"""
-    monkeypatch.setenv("DEVGEAR_PLUGIN_ROOT", str(tmp_path))
+    """CLAUDE_PLUGIN_ROOT 内の相対パス スクリプトを解決します。"""
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
 
     # プラグインルート内にスクリプトを作成
     script = tmp_path / "subdir" / "script.py"
@@ -121,10 +121,10 @@ def test_resolve_target_command_relative_script_in_plugin_root(tmp_path: Path, m
 
 
 def test_resolve_target_command_relative_path_escapes_plugin_root(tmp_path: Path, monkeypatch) -> None:
-    """DEVGEAR_PLUGIN_ROOT を逃脱する相対パスはモジュール名として扱われます。"""
+    """CLAUDE_PLUGIN_ROOT を逃脱する相対パスはモジュール名として扱われます。"""
     plugin_root = tmp_path / "plugin"
     plugin_root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("DEVGEAR_PLUGIN_ROOT", str(plugin_root))
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
 
     # プラグインルートの外にファイルを作成
     outside_file = tmp_path / "outside" / "script.py"
@@ -143,7 +143,7 @@ def test_resolve_target_command_relative_path_escapes_plugin_root(tmp_path: Path
 def test_resolve_target_command_relative_nonexistent_path_as_module(monkeypatch) -> None:
     """存在しない相対パスはモジュール名として処理されます。"""
     plugin_root = Path("/nonexistent/plugin")
-    monkeypatch.setenv("DEVGEAR_PLUGIN_ROOT", str(plugin_root))
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
 
     # 存在しないパスはモジュール名として処理される
     cmd = resolve_target_command("nonexistent.module", ["arg"])

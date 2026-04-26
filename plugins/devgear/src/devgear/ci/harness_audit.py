@@ -762,7 +762,7 @@ def show_help(exit_code: int = 0) -> None:
     """ヘルプを表示して終了する。"""
     print(
         """
-Usage: python3 "${DEVGEAR_PLUGIN_ROOT}/src/devgear/launcher.py" devgear.ci.harness_audit [scope] [--scope <repo|hooks|skills|commands|agents>] [--format <text|json>]
+Usage: python3 "${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py" devgear.ci.harness_audit [scope] [--scope <repo|hooks|skills|commands|agents>] [--format <text|json>]
        [--root <path>]
 
 Deterministic harness audit based on explicit file/rule checks.

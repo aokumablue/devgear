@@ -156,7 +156,7 @@ def test_run_with_flags_resolve_target_command_accepts_executable_targets(
     relative.write_text("#!/bin/sh\necho ok", encoding="utf-8")
     relative.chmod(0o755)
 
-    monkeypatch.setenv("DEVGEAR_PLUGIN_ROOT", str(plugin_root))
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
 
     assert run_with_flags.resolve_target_command("tool", ["x"]) == [str(relative), "x"]
 
@@ -708,7 +708,7 @@ def test_run_with_flags_build_env_and_resolve_command_branches(
     monkeypatch.setenv("PYTHONPATH", "base-path")
     plugin_root = tmp_path / "plugin"
     plugin_root.mkdir()
-    monkeypatch.setenv("DEVGEAR_PLUGIN_ROOT", str(plugin_root))
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
 
     env = run_with_flags.build_env()
     assert env["PYTHONPATH"] == f"{tmp_path / 'src'}{os.pathsep}base-path"

@@ -26,7 +26,6 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _ALLOWED_EXPANSION_VARS = frozenset(
     {
         "CLAUDE_PLUGIN_ROOT",
-        "DEVGEAR_PLUGIN_ROOT",
         "QUALITY_GATE_PROJECT_ROOT",
         "HOME",
         "TMPDIR",
@@ -124,7 +123,6 @@ def _base_env() -> dict[str, str]:
     """
     env = os.environ.copy()
     env.setdefault("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-    env.setdefault("DEVGEAR_PLUGIN_ROOT", str(PLUGIN_ROOT))
     env.setdefault("QUALITY_GATE_PROJECT_ROOT", str(_project_root()))
 
     pythonpath = env.get("PYTHONPATH")

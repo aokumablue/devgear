@@ -80,7 +80,7 @@ HTMLテンプレートでevalセットを見せる:
 ### 3. 最適化ループを回す
 
 ```bash
-source "${DEVGEAR_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
+source "${CLAUDE_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
 devgear_run devgear.skills.run_loop --eval-set <path-to-trigger-eval.json> --skill-path <path-to-skill> --model <model-id-powering-this-session> --max-iterations 5 --verbose
 ```
 
@@ -95,7 +95,7 @@ JSONの `best_description` を取り出し、SKILL.mdのfrontmatterを更新。
 `present_files` ツールにアクセスできるか確認。使えないなら飛ばす。
 
 ```bash
-source "${DEVGEAR_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
+source "${CLAUDE_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
 devgear_run devgear.skills.package_skill <path/to/skill-folder>
 ```
 

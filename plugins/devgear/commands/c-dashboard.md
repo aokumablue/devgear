@@ -25,7 +25,7 @@ command: /c-dashboard
 ## 実装
 
 ```bash
-source "${DEVGEAR_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
+source "${CLAUDE_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
 devgear_mem_json dashboard '{"days": 30, "output": "./devgear-dashboard.html", "format": "html"}'
 ```
 

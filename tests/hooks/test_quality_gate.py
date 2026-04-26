@@ -331,7 +331,7 @@ def test_quality_gate_run_step_builds_command_env_and_timeout(
     assert captured["cwd"] == str(tmp_path / "nested")
     assert captured["timeout"] == 30.0
     assert captured["env"]["EXTRA"] == "/home/tester"
-    assert captured["env"]["DEVGEAR_PLUGIN_ROOT"] == str(quality_gate.PLUGIN_ROOT)
+    assert captured["env"]["CLAUDE_PLUGIN_ROOT"] == str(quality_gate.PLUGIN_ROOT)
     assert captured["env"]["PYTHONPATH"].startswith(str(quality_gate.PLUGIN_ROOT / "src"))
 
 

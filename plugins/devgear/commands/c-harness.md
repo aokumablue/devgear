@@ -40,7 +40,7 @@ record: `{"event_type": "harness-run", "content": "Harness: Score {before} -> {a
 ## 実行エンジン
 
 ```bash
-source "${DEVGEAR_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
+source "${CLAUDE_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
 devgear_run devgear.ci.harness_audit <scope> --format <text|json> [--root <path>]
 ```
 

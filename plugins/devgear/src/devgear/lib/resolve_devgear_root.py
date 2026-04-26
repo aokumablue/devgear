@@ -33,7 +33,7 @@ def resolve_devgear_root(
     if env_root is not None:
         root_from_env = env_root
     else:
-        root_from_env = os.environ.get("CLAUDE_PLUGIN_ROOT", os.environ.get("DEVGEAR_PLUGIN_ROOT", ""))
+        root_from_env = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
     if root_from_env and root_from_env.strip():
         return Path(root_from_env.strip())
 

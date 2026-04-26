@@ -24,7 +24,7 @@ skills・rules・agent 定義が実際に守られているかを次の方法で
 ## 使い方
 
 ```bash
-source "${DEVGEAR_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
+source "${CLAUDE_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
 devgear_run devgear.skills.comply.cli ~/.claude/rules/common/testing.md
 devgear_run devgear.skills.comply.cli --dry-run ~/.claude/skills/s-search/SKILL.md
 devgear_run devgear.skills.comply.cli --gen-model haiku --model sonnet <path>

@@ -86,7 +86,7 @@ PYTHONPATH=src python -m devgear.skills.aggregate_benchmark <workspace>/iteratio
 4. **viewerを開く**
 
 ```bash
-source "${DEVGEAR_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
+source "${CLAUDE_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
 VIEWER_PID="$(devgear_run_bg devgear.skills.eval_viewer.generate_review <workspace>/iteration-N --skill-name 'my-skill' --benchmark <workspace>/iteration-N/benchmark.json)"
 ```
 

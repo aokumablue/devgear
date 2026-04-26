@@ -38,7 +38,6 @@ def build_env() -> dict[str, str]:
     """
     env = os.environ.copy()
     env.setdefault("CLAUDE_PLUGIN_ROOT", str(REPO_ROOT))
-    env.setdefault("DEVGEAR_PLUGIN_ROOT", str(REPO_ROOT))
 
     pythonpath = env.get("PYTHONPATH")
     paths = [str(REPO_ROOT / "src")]

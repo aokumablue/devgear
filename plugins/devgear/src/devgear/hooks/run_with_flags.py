@@ -53,7 +53,6 @@ def build_env() -> dict[str, str]:
     """
     env = os.environ.copy()
     env.setdefault("CLAUDE_PLUGIN_ROOT", str(REPO_ROOT))
-    env.setdefault("DEVGEAR_PLUGIN_ROOT", str(REPO_ROOT))
 
     pythonpath = env.get("PYTHONPATH")
     paths = [str(REPO_ROOT / "src")]
@@ -99,7 +98,7 @@ def resolve_target_command(target: str, args: list[str] | None = None) -> list[s
     args = list(args or [])
     candidate = Path(target)
     if not candidate.is_absolute():
-        plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", os.environ.get("DEVGEAR_PLUGIN_ROOT", str(REPO_ROOT)))).resolve()
+        plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", str(REPO_ROOT))).resolve()
         candidate = candidate if candidate.exists() else plugin_root / candidate
         try:
             if candidate.resolve().is_relative_to(plugin_root):

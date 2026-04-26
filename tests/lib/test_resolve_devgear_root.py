@@ -23,22 +23,8 @@ def test_resolve_devgear_root_uses_env_root() -> None:
     assert resolve_devgear_root(env_root="  /custom/root  ") == Path("/custom/root")
 
 
-def test_resolve_devgear_root_prefers_devgear_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEVGEAR_PLUGIN_ROOT", "  /copilot/root  ")
-
-    assert resolve_devgear_root(home_dir=Path("/unused"), env_root=None) == Path("/copilot/root")
-
-
 def test_resolve_devgear_root_prefers_claude_plugin_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/claude/root")
-    monkeypatch.delenv("DEVGEAR_PLUGIN_ROOT", raising=False)
-
-    assert resolve_devgear_root(home_dir=Path("/unused"), env_root=None) == Path("/claude/root")
-
-
-def test_resolve_devgear_root_claude_plugin_root_takes_priority(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/claude/root")
-    monkeypatch.setenv("DEVGEAR_PLUGIN_ROOT", "/devgear/root")
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "  /claude/root  ")
 
     assert resolve_devgear_root(home_dir=Path("/unused"), env_root=None) == Path("/claude/root")
 

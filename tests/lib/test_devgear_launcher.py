@@ -122,7 +122,6 @@ def test_build_env_prepends_repo_venv_to_path(monkeypatch, tmp_path: Path) -> No
     env = launcher.build_env()
 
     assert env["CLAUDE_PLUGIN_ROOT"] == str(tmp_path)
-    assert env["DEVGEAR_PLUGIN_ROOT"] == str(tmp_path)
     assert env["VIRTUAL_ENV"] == str(tmp_path / ".venv")
     assert env["PATH"].split(os.pathsep)[0] == str(tmp_path / ".venv" / "bin")
 
@@ -160,7 +159,7 @@ def test_resolve_command_falls_back_when_candidate_resolution_fails(
 ) -> None:
     plugin_root = tmp_path / "plugin"
     plugin_root.mkdir()
-    monkeypatch.setenv("DEVGEAR_PLUGIN_ROOT", str(plugin_root))
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
 
     original_resolve = launcher.Path.resolve
 

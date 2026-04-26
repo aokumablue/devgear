@@ -67,7 +67,7 @@ wait "$pid" 2>/dev/null || true
     _run_bash(script, env=env)
 
 
-def test_devgear_plugin_root_prefers_devgear_env(tmp_path: Path) -> None:
+def test_devgear_plugin_root_prefers_claude_plugin_root_env(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     helper = repo_root / "plugins" / "devgear" / "runtime" / "devgear-helpers.sh"
     script = f'''
@@ -76,7 +76,7 @@ source "{helper}"
 printf '%s\n' "$(devgear_plugin_root)"
 '''
 
-    env = {**os.environ, "DEVGEAR_PLUGIN_ROOT": str(tmp_path / "copilot")}
+    env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(tmp_path / "copilot")}
     result = _run_bash(script, env=env)
 
     assert result.stdout.strip() == str(tmp_path / "copilot")
@@ -92,7 +92,7 @@ printf '%s\n' "$(devgear_plugin_root)"
 '''
 
     env = dict(os.environ)
-    env.pop("DEVGEAR_PLUGIN_ROOT", None)
+    env.pop("CLAUDE_PLUGIN_ROOT", None)
     result = _run_bash(script, env=env)
 
     assert result.stdout.strip() == str(repo_root / "plugins" / "devgear")
@@ -103,7 +103,7 @@ def test_devgear_plugin_root_uses_file_location_fallback_without_env(tmp_path: P
     helper = repo_root / "plugins" / "devgear" / "runtime" / "devgear-helpers.sh"
     script = f'''
 set -euo pipefail
-unset DEVGEAR_PLUGIN_ROOT
+unset CLAUDE_PLUGIN_ROOT
 source "{helper}"
 printf '%s\n' "$(devgear_plugin_root)"
 '''
