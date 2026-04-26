@@ -102,7 +102,7 @@ PostgreSQL でメモリをチーム共有する場合のみ設定する。
 - `plugins/devgear/commands/` - 各コマンドの詳細
 - `plugins/devgear/skills/` - 各スキルの詳細
 - `plugins/devgear/hooks/README.md` - フックの設定とカスタマイズ
-- `plugins/devgear/commands/c-skill-create.md` / `plugins/devgear/skills/s-skillmaster/SKILL.md` - スキル生成・改善
+- `plugins/devgear/commands/c-skillgen.md` / `plugins/devgear/skills/s-skillmake/SKILL.md` - スキル生成
 - `plugins/devgear/skills/s-learn/SKILL.md` - 学習と昇格
 
 ## メモ

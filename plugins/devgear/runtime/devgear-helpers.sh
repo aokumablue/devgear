@@ -60,7 +60,7 @@ devgear_run_bg() {
   printf '%s\n' "$!"
 }
 
-# Collect the repeated inputs used by /c-skill-create.
+# Collect the repeated inputs used by /c-skillgen.
 collect_skill_create_inputs() {
   local commits="${1:-200}"
 

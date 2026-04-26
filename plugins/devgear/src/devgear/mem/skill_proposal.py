@@ -137,7 +137,7 @@ def _build_action_items(
                     "target": c["suggested_name"],
                     "description": f"ツール組み合わせ {c['tools']} を自動化するスキルを作成する（{c['evidence']['occurrence_count']}回使用）",
                     "priority": c["priority"],
-                    "command": f"/s-skillmaster でスキル '{c['suggested_name']}' を作成してください",
+                    "command": f"/s-skillmake でスキル '{c['suggested_name']}' を作成してください",
                 }
             )
 
@@ -149,7 +149,7 @@ def _build_action_items(
                     "target": g["sample_prompt"][:30],
                     "description": g["suggestion"],
                     "priority": g["priority"],
-                    "command": f"/s-skillmaster で以下の操作パターンをスキル化してください: {g['sample_prompt'][:60]}",
+                    "command": f"/s-skillmake で以下の操作パターンをスキル化してください: {g['sample_prompt'][:60]}",
                 }
             )
 
@@ -205,7 +205,7 @@ def _build_skillmaster_prompt(
     tools: list[str],
     count: int,
 ) -> str:
-    """s-skillmaster に渡すプロンプトを生成する。
+    """s-skillmake に渡すプロンプトを生成する。
 
     Args:
       skill_name: スキル名

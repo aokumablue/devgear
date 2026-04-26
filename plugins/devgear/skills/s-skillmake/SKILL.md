@@ -1,11 +1,11 @@
 ---
-name: s-skillmaster
-description: 新スキル生成/既存スキル改善/eval実行/ベンチマーク分析/説明文最適化。/c-skill-createからの委譲先。
+name: s-skillmake
+description: 新スキル生成/eval実行/ベンチマーク分析/説明文最適化。/c-skillgenからの委譲先。
 ---
 
 # スキル生成・改善
 
-スキルを生成しテストして改善するためのスキル。`/c-skill-create` は入力収集フロントエンド、ここが生成本体。
+スキルを生成しテストして改善するためのスキル。`/c-skillgen` は入力収集フロントエンド、ここが生成本体。
 
 ## 全体の流れ
 

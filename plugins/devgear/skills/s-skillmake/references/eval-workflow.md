@@ -1,6 +1,6 @@
 # テストケース実行と評価
 
-`s-skillmaster` のevalワークフロー詳細。
+`s-skillmake` のevalワークフロー詳細。
 
 ## 全体の流れ
 
@@ -24,6 +24,7 @@ Execute this task:
 ```
 
 **baseline run**（同じpromptだが、baselineの種類は状況による）
+
 - **新しいスキルを作る場合**: スキルなし。`without_skill/outputs/` に保存
 - **既存スキルを改善する場合**: 旧版をbaselineにする。編集前に `cp -r <skill-path> <workspace>/skill-snapshot/` でスナップショットを作り、そのコピーをbaselineに向ける。保存先は `old_skill/outputs/`
 
