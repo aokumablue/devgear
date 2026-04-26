@@ -326,7 +326,7 @@ class TestImportEventLogs:
         # 存在しないディレクトリをモック
         with (
             patch("devgear.mem.importers.DEVGEAR_DIR", tmp_path / "nonexistent" / ".devgear"),
-            patch("devgear.mem.importers.CLAUDE_STATE_DIR", tmp_path / "nonexistent" / "state"),
+            patch("devgear.mem.importers.DEVGEAR_STATE_DIR", tmp_path / "nonexistent" / "state"),
         ):
             result = import_event_logs(db, "test_user")
         assert result == 0
@@ -350,7 +350,7 @@ class TestImportEventLogs:
 
         with (
             patch("devgear.mem.importers.DEVGEAR_DIR", devgear_dir),
-            patch("devgear.mem.importers.CLAUDE_STATE_DIR", state_dir),
+            patch("devgear.mem.importers.DEVGEAR_STATE_DIR", state_dir),
         ):
             result = import_event_logs(db, "test_user")
 
@@ -412,7 +412,7 @@ class TestImportEventLogs:
 
         with (
             patch("devgear.mem.importers.DEVGEAR_DIR", devgear_root),
-            patch("devgear.mem.importers.CLAUDE_STATE_DIR", state_dir),
+            patch("devgear.mem.importers.DEVGEAR_STATE_DIR", state_dir),
         ):
             result = import_event_logs(db, "test_user")
 
@@ -483,7 +483,7 @@ class TestImportAll:
 
         with (
             patch("devgear.mem.importers.DEVGEAR_DIR", tmp_path / "nonexistent" / ".devgear"),
-            patch("devgear.mem.importers.CLAUDE_STATE_DIR", tmp_path / "nonexistent" / "state"),
+            patch("devgear.mem.importers.DEVGEAR_STATE_DIR", tmp_path / "nonexistent" / "state"),
         ):
             result = import_all(db, "test_user", str(tmp_path))
 

@@ -224,7 +224,6 @@ def test_session_start_slim_injection_and_error_branch(monkeypatch: pytest.Monke
     monkeypatch.setattr(session_start, "get_sessions_dir", lambda: sessions_dir)
     monkeypatch.setattr(session_start, "get_session_search_dirs", lambda: [])
     monkeypatch.setattr(session_start, "find_files", lambda *args, **kwargs: [])
-    monkeypatch.setattr(session_start, "list_aliases", lambda limit=5: [])
     monkeypatch.setattr(session_start, "get_package_manager", lambda: SimpleNamespace(name=None, source="auto"))
     monkeypatch.setattr(
         session_start,
@@ -355,7 +354,6 @@ class TestImportAdrsAndInstincts:
         monkeypatch.setattr(ss_mod, "get_sessions_dir", lambda: tmp_path / "sessions")
         monkeypatch.setattr(ss_mod, "get_session_search_dirs", lambda: [])
         monkeypatch.setattr(ss_mod, "find_files", lambda *args, **kwargs: [])
-        monkeypatch.setattr(ss_mod, "list_aliases", lambda limit=5: [])
         monkeypatch.setattr(ss_mod, "get_package_manager", lambda: SimpleNamespace(name=None, source="auto"))
         monkeypatch.setattr(
             ss_mod,

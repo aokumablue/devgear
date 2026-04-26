@@ -255,7 +255,7 @@ def _get_idle_seconds() -> int:
 
 def _guardian_allows(project_dir: Path, project_root: Path, log_file: Path) -> bool:
     interval = int(os.environ.get("OBSERVER_INTERVAL_SECONDS", "300"))
-    last_run_log = Path(os.environ.get("OBSERVER_LAST_RUN_LOG", str(Path.home() / ".claude" / "observer-last-run.log")))
+    last_run_log = Path(os.environ.get("OBSERVER_LAST_RUN_LOG", str(Path.home() / ".devgear" / "observer-last-run.log")))
     active_start = int(os.environ.get("OBSERVER_ACTIVE_HOURS_START", "800"))
     active_end = int(os.environ.get("OBSERVER_ACTIVE_HOURS_END", "2300"))
     max_idle = int(os.environ.get("OBSERVER_MAX_IDLE_SECONDS", "1800"))

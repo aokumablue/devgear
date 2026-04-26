@@ -86,16 +86,7 @@ def get_registry_file() -> Path:
 
 def get_sessions_dir() -> Path:
     """セッションディレクトリを取得する。"""
-    return get_claude_dir() / SESSION_DATA_DIR_NAME
-
-
-def get_legacy_sessions_dir() -> Path:
-    """旧セッションディレクトリ（~/.claude/sessions）を取得する。
-
-    以前のバージョンとの互換性のために保持。
-    現行のセッションディレクトリは get_sessions_dir() を参照。
-    """
-    return get_claude_dir() / "sessions"
+    return get_devgear_dir() / SESSION_DATA_DIR_NAME
 
 
 def get_session_search_dirs() -> list[Path]:
@@ -657,7 +648,6 @@ __all__ = [
     "get_home_dir",
     "get_claude_dir",
     "get_sessions_dir",
-    "get_legacy_sessions_dir",
     "get_session_search_dirs",
     "get_learned_skills_dir",
     "get_temp_dir",

@@ -23,7 +23,6 @@ from devgear.lib.core_utils import (
     get_git_user_name,
     get_home_dir,
     get_learned_skills_dir,
-    get_legacy_sessions_dir,
     get_session_id_short,
     get_session_search_dirs,
     get_sessions_dir,
@@ -92,14 +91,9 @@ class TestDirectoryFunctions:
         assert get_devgear_dir() == get_home_dir() / ".devgear"
 
     def test_get_sessions_dir(self):
-        """claude ディレクトリ配下の session-data を返すこと。"""
+        """devgear ディレクトリ配下の session-data を返すこと。"""
         sessions = get_sessions_dir()
-        assert sessions == get_claude_dir() / "session-data"
-
-    def test_get_legacy_sessions_dir(self):
-        """claude ディレクトリ配下の sessions を返すこと。"""
-        legacy = get_legacy_sessions_dir()
-        assert legacy == get_claude_dir() / "sessions"
+        assert sessions == get_devgear_dir() / "session-data"
 
     def test_get_session_search_dirs_no_duplicates(self):
         """重複のないディレクトリ一覧を返すこと。"""

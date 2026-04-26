@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from devgear.lib.core_utils import get_claude_dir, get_devgear_dir
+from devgear.lib.core_utils import get_devgear_dir
 from devgear.mem.database import Adr, Database, EventLog, Instinct, generate_uuid
 from devgear.mem.logger import get as _get_logger
 
@@ -19,7 +19,7 @@ log = _get_logger("IMPORT")
 # --- パス定義 ---
 
 DEVGEAR_DIR = get_devgear_dir()
-CLAUDE_STATE_DIR = get_claude_dir() / "state"
+DEVGEAR_STATE_DIR = get_devgear_dir() / "state"
 
 
 def _project_dirs() -> list[Path]:
@@ -280,7 +280,7 @@ def import_event_logs(db: Database, origin_user: str, project_id: str | None = N
 
     # skill-runs.jsonl
     if project_id is None:
-        skill_runs = CLAUDE_STATE_DIR / "skill-runs.jsonl"
+        skill_runs = DEVGEAR_STATE_DIR / "skill-runs.jsonl"
         if skill_runs.exists():
             count += _import_jsonl_events(db, skill_runs, "skill-run", None, origin_user)
 

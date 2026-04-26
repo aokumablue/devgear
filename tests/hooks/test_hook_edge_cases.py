@@ -202,7 +202,6 @@ def test_session_start_run_injects_previous_session_and_project_context(
     monkeypatch.setattr(session_start, "get_session_search_dirs", lambda: [first_dir, second_dir])
     monkeypatch.setattr(session_start, "find_files", fake_find_files)
     monkeypatch.setattr(session_start, "read_file", lambda path: newer.read_text(encoding="utf-8"))
-    monkeypatch.setattr(session_start, "list_aliases", lambda limit=5: [SimpleNamespace(name="daily")])
     monkeypatch.setattr(session_start, "get_package_manager", lambda: SimpleNamespace(name="npm", source="auto"))
     monkeypatch.setattr(
         session_start,
@@ -219,7 +218,6 @@ def test_session_start_run_injects_previous_session_and_project_context(
     assert "\x1b[" not in additional_context
     assert "Project type:" in additional_context
     assert any("learned skill(s) available" in message for message in logs)
-    assert any("session alias(es) available" in message for message in logs)
     assert any("Package manager: npm" in message for message in logs)
 
 
@@ -286,7 +284,6 @@ def test_session_start_run_skips_template_session_and_prompts_for_pm(
         lambda dir_path, pattern, max_age=7: [{"path": str(session_file), "mtime": 1.0}] if pattern == "*-session.tmp" else [],
     )
     monkeypatch.setattr(session_start, "read_file", lambda path: session_file.read_text(encoding="utf-8"))
-    monkeypatch.setattr(session_start, "list_aliases", lambda limit=5: [])
     monkeypatch.setattr(session_start, "get_package_manager", lambda: SimpleNamespace(name=None, source="auto"))
     monkeypatch.setattr(session_start, "get_selection_prompt", lambda: "SELECT A PACKAGE MANAGER")
     monkeypatch.setattr(session_start.Path, "cwd", lambda: tmp_path)
@@ -328,7 +325,6 @@ def test_session_start_slim_injection_uses_skill_content(
     monkeypatch.setattr(session_start, "get_sessions_dir", lambda: sessions_dir)
     monkeypatch.setattr(session_start, "get_session_search_dirs", lambda: [])
     monkeypatch.setattr(session_start, "find_files", lambda *args, **kwargs: [])
-    monkeypatch.setattr(session_start, "list_aliases", lambda limit=5: [])
     monkeypatch.setattr(session_start, "get_package_manager", lambda: SimpleNamespace(name=None, source="auto"))
     monkeypatch.setattr(
         session_start,

@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 
 from devgear.hooks.hook_common import parse_json_object, read_raw_stdin, write_stdout
-from devgear.lib.core_utils import append_file, ensure_dir, get_claude_dir
+from devgear.lib.core_utils import append_file, ensure_dir, get_devgear_dir
 
 
 def to_number(value: object) -> int | float:
@@ -93,7 +93,7 @@ def main() -> int:
         )
         session_id = str(os.environ.get("CLAUDE_SESSION_ID") or "default")
 
-        metrics_dir = get_claude_dir() / "metrics"
+        metrics_dir = get_devgear_dir() / "metrics"
         ensure_dir(metrics_dir)
 
         row = {

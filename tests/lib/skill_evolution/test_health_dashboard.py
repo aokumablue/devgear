@@ -132,6 +132,7 @@ def test_collect_skill_health_and_format_report(skill_env, make_skill, append_js
     report = health.collect_skill_health(
         {
             **skill_env,
+            "runs_file_path": str(skill_env["runs_file"]),
             "now": now,
             "warn_threshold": 0.1,
         }
@@ -230,13 +231,13 @@ def test_health_helpers(skill_env, make_skill, append_jsonl, now):
             }
         ],
     )
-    report = health.collect_skill_health({**skill_env, "now": now, "warn_threshold": 0.1})
+    report = health.collect_skill_health({**skill_env, "runs_file_path": str(skill_env["runs_file"]), "now": now, "warn_threshold": 0.1})
     assert any(skill["skill_id"] == "alpha" for skill in report["skills"])
 
     with pytest.raises(ValueError, match="Invalid warn threshold: bad"):
-        health.collect_skill_health({**skill_env, "now": now, "warn_threshold": "bad"})
+        health.collect_skill_health({**skill_env, "runs_file_path": str(skill_env["runs_file"]), "now": now, "warn_threshold": "bad"})
     with pytest.raises(ValueError, match="Invalid warn threshold: -0.1"):
-        health.collect_skill_health({**skill_env, "now": now, "warn_threshold": -0.1})
+        health.collect_skill_health({**skill_env, "runs_file_path": str(skill_env["runs_file"]), "now": now, "warn_threshold": -0.1})
 
     assert "No skill execution records found." in health.format_health_report({"generated_at": now, "skills": []})
 
@@ -304,8 +305,8 @@ def test_dashboard_primitives_and_panels(skill_env, make_skill, append_jsonl, no
     assert buckets[-1]["runs"] == 2
     assert buckets[-1]["rate"] == 0.5
 
-    report = health.collect_skill_health({**skill_env, "now": now, "warn_threshold": 0.1})
-    records = tracker.read_skill_execution_records({**skill_env, "now": now})
+    report = health.collect_skill_health({**skill_env, "runs_file_path": str(skill_env["runs_file"]), "now": now, "warn_threshold": 0.1})
+    records = tracker.read_skill_execution_records({**skill_env, "runs_file_path": str(skill_env["runs_file"]), "now": now})
 
     success_panel = dashboard.render_success_rate_panel(records, report["skills"], {"now": now})
     assert "Success Rate" in success_panel["text"]
@@ -323,12 +324,12 @@ def test_dashboard_primitives_and_panels(skill_env, make_skill, append_jsonl, no
     assert "Version History" in version_panel["text"]
     assert any(skill["skill_id"] == "alpha" for skill in version_panel["data"]["skills"])
 
-    dashboard_result = dashboard.render_dashboard({**skill_env, "now": now, "warn_threshold": 0.1})
+    dashboard_result = dashboard.render_dashboard({**skill_env, "runs_file_path": str(skill_env["runs_file"]), "now": now, "warn_threshold": 0.1})
     assert "devgear Skill Health Dashboard" in dashboard_result["text"]
     assert "Success Rate" in dashboard_result["text"]
     assert dashboard_result["data"]["summary"]["declining_skills"] == 1
 
-    failures_only = dashboard.render_dashboard({**skill_env, "now": now, "warn_threshold": 0.1, "panel": "failures"})
+    failures_only = dashboard.render_dashboard({**skill_env, "runs_file_path": str(skill_env["runs_file"]), "now": now, "warn_threshold": 0.1, "panel": "failures"})
     assert "Failure Patterns" in failures_only["text"]
     assert "Version History" not in failures_only["text"]
 

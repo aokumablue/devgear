@@ -26,7 +26,6 @@ from devgear.lib.core_utils import (
 )
 from devgear.lib.package_manager import get_package_manager, get_selection_prompt
 from devgear.lib.project_detect import detect_project
-from devgear.lib.session_aliases import list_aliases
 from devgear.lib.settings import extract_coverage_hint_lines
 from devgear.mem.settings import Settings
 
@@ -225,14 +224,6 @@ def run(_raw_input: str) -> str:
 
     if learned_skills:
         log(f"[SessionStart] {len(learned_skills)} learned skill(s) available in {learned_dir}")
-
-    # 利用可能なセッションエイリアスをチェック
-    aliases = list_aliases(limit=5)
-
-    if aliases:
-        alias_names = ", ".join(a.name for a in aliases)
-        log(f"[SessionStart] {len(aliases)} session alias(es) available: {alias_names}")
-        log("[SessionStart] Use /c-sessions load <alias> to continue a previous session")
 
     # プロジェクトタイプとフレームワークを先に検出（PM ログで言語情報を参照するため）
     project_info = detect_project(Path.cwd())

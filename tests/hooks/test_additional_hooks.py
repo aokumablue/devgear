@@ -142,7 +142,7 @@ class TestCostTracker:
         monkeypatch.setattr(cost_tracker, "write_stdout", stdout.append)
         monkeypatch.setattr(cost_tracker, "append_file", lambda path, content: appended.append((Path(path), content)))
         monkeypatch.setattr(cost_tracker, "ensure_dir", lambda path: Path(path))
-        monkeypatch.setattr(cost_tracker, "get_claude_dir", lambda: tmp_path)
+        monkeypatch.setattr(cost_tracker, "get_devgear_dir", lambda: tmp_path)
         monkeypatch.setenv("CLAUDE_SESSION_ID", "session-123")
 
         assert cost_tracker.main() == 0
@@ -728,7 +728,6 @@ class TestSessionStartRubyLog:
         monkeypatch.setattr(session_start, "get_package_manager", lambda: PackageManagerResult(name=None, config=None, source="none"))
         monkeypatch.setattr(session_start, "ensure_dir", lambda _: None)
         monkeypatch.setattr(session_start, "find_files", lambda *_a, **_kw: [])
-        monkeypatch.setattr(session_start, "list_aliases", lambda **_kw: [])
         monkeypatch.setattr(session_start, "_save_project_profile", lambda _: None)
         monkeypatch.setattr(session_start, "extract_coverage_hint_lines", lambda _: None)
 

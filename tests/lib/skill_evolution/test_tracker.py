@@ -250,11 +250,12 @@ def test_read_jsonl_skips_malformed_rows(skill_env):
     assert records[0]["skill_id"] == "alpha"
 
 
-def test_get_runs_file_path_defaults_to_home(skill_env):
-    """既定の runs ファイルパスがホームディレクトリ配下になること。"""
-    path = tracker.get_runs_file_path(home_dir=skill_env["home_dir"])
+def test_get_runs_file_path_defaults_to_devgear(monkeypatch, tmp_path):
+    """既定の runs ファイルパスが ~/.devgear/state/ 配下になること。"""
+    monkeypatch.setattr(tracker, "get_devgear_dir", lambda: tmp_path / ".devgear")
+    path = tracker.get_runs_file_path()
     assert path.endswith("skill-runs.jsonl")
-    assert str(skill_env["home_dir"]) in path
+    assert str(tmp_path / ".devgear") in path
 
 
 def test_read_skill_execution_records_supports_state_store_read_methods(skill_env):

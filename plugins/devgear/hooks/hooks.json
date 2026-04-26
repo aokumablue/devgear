@@ -162,17 +162,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:slim\" \"devgear.hooks.pre_user_prompt\" \"standard,strict\"",
-            "timeout": 5
-          }
-        ],
-        "description": "Slim レスポンス圧縮: /slim コマンドの検出とモード注入"
-      },
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:mem:sync-check\" \"devgear.mem.cli sync-check\" \"standard,strict\"",
             "async": true,
             "timeout": 600
