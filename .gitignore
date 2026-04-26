@@ -5,7 +5,15 @@ node_modules/
 *.orig
 uv.lock
 .coverage
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
 skill.skill
 tmp/
-# .github/
-# plugins/devgear-*/
+.env
+.env.*
+Dockerfile.postgres*
+compose.yaml
+compose.*.yaml

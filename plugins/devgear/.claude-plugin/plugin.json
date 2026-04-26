@@ -9,17 +9,9 @@
   "repository": "https://github.com/aokumablue/devgear",
   "license": "Apache-2.0",
   "keywords": [
-    "claude-code",
     "agents",
     "skills",
-    "hooks",
-    "rules",
-    "tdd",
-    "code-review",
-    "security",
-    "workflow",
-    "automation",
-    "best-practices"
+    "workflow"
   ],
   "agents": [
     "./agents/a-arch.md",

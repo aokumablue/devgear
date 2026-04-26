@@ -1,8 +1,7 @@
 {
   "name": "devgear",
   "owner": {
-    "name": "aokumablue",
-    "email": "aokumablue@gmail.com"
+    "name": "aokumablue"
   },
   "metadata": {
     "description": "開発に必要な汎用プラグイン集です。エージェント、スキル、フック、コマンドをまとめて導入し、計画・実装・検証・レビューの流れを揃えます。"
