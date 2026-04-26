@@ -11,7 +11,11 @@
   "keywords": [
     "agents",
     "skills",
-    "workflow"
+    "commands",
+    "hooks",
+    "rules",
+    "workflow",
+    "plugin"
   ],
   "agents": [
     "./agents/a-arch.md",

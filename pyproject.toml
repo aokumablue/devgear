@@ -3,25 +3,17 @@ name = "devgear"
 version = "0.0.1"
 description = "開発に必要な汎用プラグイン集です。エージェント、スキル、フック、コマンドをまとめて導入し、計画・実装・検証・レビューの流れを揃えます。"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 authors = [
-    { name = "Affaan Mustafa", url = "https://x.com/affaanmustafa" }
+    { name = "aokumablue", url = "https://github.com/aokumablue" }
 ]
 keywords = [
-    "claude-code",
-    "claude",
-    "anthropic",
     "agents",
     "skills",
+    "commands",
     "hooks",
-    "mcp",
     "rules",
-    "tdd",
-    "code-review",
-    "security",
-    "automation",
-    "best-practices",
     "workflow",
     "plugin"
 ]

@@ -18,23 +18,21 @@
       "keywords": [
         "agents",
         "skills",
-        "hooks",
         "commands",
-        "tdd",
-        "code-review",
-        "security",
-        "best-practices"
+        "hooks",
+        "rules",
+        "workflow",
+        "plugin"
       ],
       "category": "workflow",
       "tags": [
         "agents",
         "skills",
-        "hooks",
         "commands",
-        "tdd",
-        "code-review",
-        "security",
-        "best-practices"
+        "hooks",
+        "rules",
+        "workflow",
+        "plugin"
       ],
       "strict": false
     }
