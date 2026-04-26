@@ -153,7 +153,7 @@ scope: global
 2. 各インスタンスの信頼度が**0.8以上**
 3. ドメインがグローバル向けリスト（security/general-best-practices/workflow）に含まれる
 
-昇格は `devgear.skills.learn.cli promote` コマンドまたは `/c-evolve` の分析で行われる。
+昇格は `devgear.skills.learn.cli promote` コマンドまたは `/c-instinct evolve` の分析で行われる。
 
 ## 重要なガイドライン
 

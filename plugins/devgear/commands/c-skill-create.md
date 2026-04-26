@@ -47,4 +47,4 @@ s-learn連携用インスティンクトも同流れで生成。
 
 - `/c-instinct import` — 生成インスティンクトをインポート
 - `/c-dashboard` — 学習済みインスティンクトや成長候補の可視化
-- `/c-evolve` — インスティンクトをskills/agentsにクラスタリング
+- `/c-instinct evolve` — インスティンクトをskills/agentsにクラスタリング

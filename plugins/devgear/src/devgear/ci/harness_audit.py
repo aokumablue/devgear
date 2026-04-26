@@ -425,12 +425,11 @@ def get_repo_checks(root_dir: str | Path) -> list[dict[str, Any]]:
             "category": "Eval Coverage",
             "points": 4,
             "scopes": ["repo", "commands"],
-            "path": "commands/c-learn-eval.md",
-            "description": "評価・検証コマンドが存在する",
-            "pass": file_exists(root_dir, "commands/c-learn-eval.md")
-            and file_exists(root_dir, "commands/c-review.md")
+            "path": "commands/c-review.md + skills/s-learn/SKILL.md",
+            "description": "検証コマンドと手動評価機能が存在する",
+            "pass": file_exists(root_dir, "commands/c-review.md")
             and file_exists(root_dir, "commands/c-plan.md"),
-            "fix": "Add eval/review/plan commands to standardize verification loops.",
+            "fix": "Add review/plan commands to standardize verification loops. s-learn SKILL.md provides manual eval capability.",
         },
         {
             "id": "eval-tests-presence",
