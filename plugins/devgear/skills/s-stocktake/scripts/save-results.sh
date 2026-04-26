@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# save-results.sh — merge evaluated skills into results.json with correct UTC timestamp
-# Usage: save-results.sh RESULTS_JSON <<< "$EVAL_JSON"
+# save-results.sh — 評価済みスキルをresults.jsonに正確なUTCタイムスタンプとともにマージする
+# 使い方: save-results.sh RESULTS_JSON <<< "$EVAL_JSON"
 #
-# stdin format:
+# stdin フォーマット:
 #   { "skills": {...}, "mode"?: "full"|"quick", "batch_progress"?: {...} }
 #
-# Always sets evaluated_at to current UTC time via `date -u`.
-# Merges stdin .skills into existing results.json (new entries override old).
-# Optionally updates .mode and .batch_progress if present in stdin.
+# 常に `date -u` で現在のUTC時刻を evaluated_at にセットする。
+# stdinの .skills を既存のresults.jsonにマージする（新規エントリが古いものを上書き）。
+# stdinに .mode と .batch_progress があれば更新する。
 
 set -euo pipefail
 
@@ -21,7 +21,7 @@ fi
 
 EVALUATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Read eval results from stdin and validate JSON before touching the results file
+# stdinから評価結果を読み込み、結果ファイルを更新する前にJSONを検証する
 input_json=$(cat)
 if ! echo "$input_json" | jq empty 2>/dev/null; then
   echo "Error: stdin is not valid JSON" >&2
@@ -29,17 +29,17 @@ if ! echo "$input_json" | jq empty 2>/dev/null; then
 fi
 
 if [[ ! -f "$RESULTS_JSON" ]]; then
-  # Bootstrap: create new results.json from stdin JSON + current UTC timestamp
+  # 初回作成: stdinのJSONに現在のUTCタイムスタンプを付加して新規作成する
   echo "$input_json" | jq --arg ea "$EVALUATED_AT" \
     '. + { evaluated_at: $ea }' > "$RESULTS_JSON"
   exit 0
 fi
 
-# Merge: new .skills override existing ones; old skills not in input_json are kept.
-# Optionally update .mode and .batch_progress if provided.
+# マージ: 新しい .skills が既存を上書きする。input_jsonにないスキルは保持される。
+# .mode と .batch_progress は提供されている場合のみ更新する。
 #
-# Use mktemp for a collision-safe temp file (concurrent runs on the same RESULTS_JSON
-# would race on a predictable ".tmp" suffix; random suffix prevents silent overwrites).
+# 競合する同時実行を防ぐため mktemp で衝突安全な一時ファイルを使用する
+# （同じ RESULTS_JSON に対する並行実行が予測可能な ".tmp" サフィックスで競合しないよう）
 tmp=$(mktemp "${RESULTS_JSON}.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
 

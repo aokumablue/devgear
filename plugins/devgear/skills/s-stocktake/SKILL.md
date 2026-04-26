@@ -7,6 +7,12 @@ description: Claude skills/commands品質監査。変更skillのみ対象のQuic
 
 skills と commands を品質チェックリストとAIによる総合判断で監査。
 
+## 発動タイミング
+
+- 「スキルを棚卸しして」「skills の品質チェックして」と言われたとき
+- 新しいスキル追加・既存スキル大幅改修後
+- `/c-stocktake` または `/c-stocktake full` コマンドで明示起動
+
 ## 対象範囲
 
 - `~/.claude/skills/` — グローバルスキル

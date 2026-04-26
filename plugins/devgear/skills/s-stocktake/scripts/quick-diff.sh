@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# quick-diff.sh — compare skill file mtimes against results.json evaluated_at
-# Usage: quick-diff.sh RESULTS_JSON [CWD_SKILLS_DIR]
-# Output: JSON array of changed/new files to stdout (empty [] if no changes)
+# quick-diff.sh — スキルファイルのmtimeをresults.jsonのevaluated_atと比較する
+# 使い方: quick-diff.sh RESULTS_JSON [CWD_SKILLS_DIR]
+# 出力: 変更済み・新規ファイルのJSON配列をstdoutに出力（変更なしの場合は []）
 #
-# When CWD_SKILLS_DIR is omitted, defaults to $PWD/.claude/skills so the
-# script always picks up project-level skills without relying on the caller.
+# CWD_SKILLS_DIR 省略時は $PWD/.claude/skills をデフォルトとする。
+# 呼び出し元に依存せずプロジェクトレベルのスキルを常に取得する。
 #
-# Environment:
-#   SKILL_STOCKTAKE_GLOBAL_DIR   Override ~/.claude/skills (for testing only;
-#                                do not set in production — intended for bats tests)
-#   SKILL_STOCKTAKE_PROJECT_DIR  Override project dir detection (for testing only)
+# 環境変数:
+#   SKILL_STOCKTAKE_GLOBAL_DIR   ~/.claude/skills を上書き（テスト専用。本番では設定しない）
+#   SKILL_STOCKTAKE_PROJECT_DIR  プロジェクトディレクトリ検出を上書き（テスト専用）
 
 set -euo pipefail
 
@@ -22,31 +21,31 @@ if [[ -z "$RESULTS_JSON" || ! -f "$RESULTS_JSON" ]]; then
   exit 1
 fi
 
-# Validate CWD_SKILLS_DIR looks like a .claude/skills path (defense-in-depth).
-# Only warn when the path exists — a nonexistent path poses no traversal risk.
+# CWD_SKILLS_DIR が .claude/skills パスに見えるか検証（多層防御）。
+# パスが存在する場合のみ警告。存在しないパスはディレクトリトラバーサルのリスクなし。
 if [[ -n "$CWD_SKILLS_DIR" && -d "$CWD_SKILLS_DIR" && "$CWD_SKILLS_DIR" != */.claude/skills* ]]; then
   echo "Warning: CWD_SKILLS_DIR does not look like a .claude/skills path: $CWD_SKILLS_DIR" >&2
 fi
 
 evaluated_at=$(jq -r '.evaluated_at' "$RESULTS_JSON")
 
-# Fail fast on a missing or malformed evaluated_at rather than producing
-# unpredictable results from ISO 8601 string comparison against "null".
+# evaluated_at が不正・欠落の場合は早期終了する。
+# "null" との ISO 8601 文字列比較で予期しない結果が出るのを防ぐ。
 if [[ ! "$evaluated_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
   echo "Error: invalid or missing evaluated_at in $RESULTS_JSON: $evaluated_at" >&2
   exit 1
 fi
 
-# Pre-extract known paths from results.json once (O(1) lookup per file instead of O(n*m))
+# results.json から既知パスを一度だけ抽出する（ファイルごとに O(1) ルックアップ）
 known_paths=$(jq -r '.skills[].path' "$RESULTS_JSON" 2>/dev/null)
 
 tmpdir=$(mktemp -d)
-# Use a function to avoid embedding $tmpdir in a quoted string (prevents injection
-# if TMPDIR were crafted to contain shell metacharacters).
+# $tmpdir をクォート文字列に埋め込まないよう関数経由でクリーンアップ
+# （TMPDIRにシェルメタ文字が含まれる場合のインジェクション防止）
 _cleanup() { rm -rf "$tmpdir"; }
 trap _cleanup EXIT
 
-# Shared counter across process_dir calls — intentionally NOT local
+# process_dir 呼び出しをまたぐ共有カウンター（intentionally NOT local）
 i=0
 
 process_dir() {
@@ -56,15 +55,15 @@ process_dir() {
     mtime=$(date -u -r "$file" +%Y-%m-%dT%H:%M:%SZ)
     dp="${file/#$HOME/~}"
 
-    # Check if this file is known to results.json (exact whole-line match to
-    # avoid substring false-positives, e.g. "python-patterns" matching "python-patterns-v2").
+    # results.json に既知かどうかを完全行一致で確認する。
+    # 部分一致誤検知を防ぐ（例: "python-patterns" が "python-patterns-v2" にマッチしないよう）
     if echo "$known_paths" | grep -qxF "$dp"; then
       is_new="false"
-      # Known file: only emit if mtime changed (ISO 8601 string comparison is safe)
+      # 既知ファイル: mtime が変化した場合のみ出力（ISO 8601 文字列比較は安全）
       [[ "$mtime" > "$evaluated_at" ]] || continue
     else
       is_new="true"
-      # New file: always emit regardless of mtime
+      # 新規ファイル: mtime に関係なく常に出力
     fi
 
     jq -n \
