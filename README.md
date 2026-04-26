@@ -90,11 +90,10 @@ PostgreSQL でメモリをチーム共有する場合のみ設定する。
 ## まず試すもの
 
 1. `bash scripts/install.sh`
-2. `/c-sessions`
-3. `/c-plan`
-4. `/c-tdd`
-5. `/c-review`
-6. `/c-clean`
+2. `/c-plan`
+3. `/c-tdd`
+4. `/c-review`
+5. `/c-clean`
 
 ## 詳細
 
@@ -104,10 +103,3 @@ PostgreSQL でメモリをチーム共有する場合のみ設定する。
 - `plugins/devgear/hooks/README.md` - フックの設定とカスタマイズ
 - `plugins/devgear/commands/c-skillgen.md` / `plugins/devgear/skills/s-skillmake/SKILL.md` - スキル生成
 - `plugins/devgear/skills/s-learn/SKILL.md` - 学習と昇格
-
-## メモ
-
-```bash
-# プライベートリポジトリのプラグインをインストールする場合はSSHを使用するように設定が必要
-git config --global url.ssh://git@github.com/.insteadOf https://github.com/
-```
