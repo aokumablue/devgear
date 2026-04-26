@@ -1,0 +1,39 @@
+{
+  "name": "devgear",
+  "metadata": {
+    "description": "開発に必要な汎用プラグイン集です。エージェント、スキル、フック、コマンドをまとめて導入し、計画・実装・検証・レビューの流れを揃えます。"
+  },
+  "plugins": [
+    {
+      "name": "devgear",
+      "source": "./plugins/devgear",
+      "description": "開発に必要な汎用プラグイン集です。エージェント、スキル、フック、コマンドをまとめて導入し、計画・実装・検証・レビューの流れを揃えます。",
+      "version": "0.0.1",
+      "homepage": "https://github.com/aokumablue/devgear",
+      "repository": "https://github.com/aokumablue/devgear",
+      "license": "Apache-2.0",
+      "keywords": [
+        "agents",
+        "skills",
+        "hooks",
+        "commands",
+        "tdd",
+        "code-review",
+        "security",
+        "best-practices"
+      ],
+      "category": "workflow",
+      "tags": [
+        "agents",
+        "skills",
+        "hooks",
+        "commands",
+        "tdd",
+        "code-review",
+        "security",
+        "best-practices"
+      ],
+      "strict": false
+    }
+  ]
+}

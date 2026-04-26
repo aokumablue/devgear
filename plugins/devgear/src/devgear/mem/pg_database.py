@@ -1,0 +1,887 @@
+"""PostgreSQL データベースクライアント（チーム同期用）"""
+
+from __future__ import annotations
+
+from collections.abc import Generator
+from contextlib import contextmanager
+from typing import TYPE_CHECKING
+
+from devgear.mem.database import (
+    Adr,
+    EventLog,
+    Instinct,
+    InteractionLog,
+    MemItemRun,
+    MemoryChunk,
+    ProjectProfile,
+    Session,
+)
+from devgear.mem.logger import get as _get_logger
+
+if TYPE_CHECKING:
+    import psycopg
+
+log = _get_logger("PG")
+
+
+class PgDatabase:
+    """PostgreSQL データベースクライアント。
+
+    psycopg は遅延インポートで、同期が無効な場合はインストール不要。
+    接続プールを使用し、複数接続の効率的な管理を行う。
+    """
+
+    def __init__(self, postgres_url: str, *, use_pool: bool = True) -> None:
+        self._url = postgres_url
+        self._conn: psycopg.Connection | None = None
+        self._pool = None
+        self._use_pool = use_pool
+
+    def _get_conn(self) -> psycopg.Connection:
+        """接続を取得（遅延接続）。プールが有効なら ConnectionPool を使用。"""
+        if self._use_pool:
+            if self._pool is None:
+                try:
+                    from psycopg_pool import ConnectionPool
+
+                    self._pool = ConnectionPool(self._url, min_size=1, max_size=4)
+                except ImportError:
+                    # psycopg_pool 未インストール時はフォールバック
+                    log.debug("psycopg_pool が見つかりません。単一接続を使用します")
+                    self._use_pool = False
+                    return self._get_conn()
+            return self._pool.getconn()
+        # フォールバック: 単一接続
+        if self._conn is None or self._conn.closed:
+            import psycopg
+
+            self._conn = psycopg.connect(self._url)
+        return self._conn
+
+    def _put_conn(self, conn: psycopg.Connection) -> None:
+        """プール使用時に接続を返却する。"""
+        if self._use_pool and self._pool is not None:
+            self._pool.putconn(conn)
+
+    @contextmanager
+    def transaction(self) -> Generator[psycopg.Connection, None, None]:
+        """トランザクションコンテキスト。接続を yield する。"""
+        conn = self._get_conn()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+
+    def close(self) -> None:
+        """接続を閉じる。"""
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
+        if self._conn and not self._conn.closed:
+            self._conn.close()
+            self._conn = None
+
+    def test_connection(self) -> bool:
+        """接続テスト。"""
+        conn = None
+        try:
+            conn = self._get_conn()
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                return cur.fetchone() is not None
+        except Exception as e:
+            log.error("PostgreSQL 接続テスト失敗: %s", e)
+            return False
+        finally:
+            if conn:
+                self._put_conn(conn)
+
+    # --- memory_chunks ---
+
+    def upsert_chunk(self, chunk: MemoryChunk, origin_user: str) -> None:
+        """チャンクを UPSERT する。"""
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO memory_chunks
+           (id, origin_user, session_id, project, chunk_index, content,
+            tool_names, files_read, files_modified, user_prompt,
+            created_at_epoch, access_count, last_accessed_epoch,
+            merged_generation, merged_into, synced_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+           ON CONFLICT (origin_user, session_id, chunk_index) DO UPDATE SET
+             content = EXCLUDED.content,
+             tool_names = EXCLUDED.tool_names,
+             files_read = EXCLUDED.files_read,
+             files_modified = EXCLUDED.files_modified,
+             user_prompt = EXCLUDED.user_prompt,
+             access_count = EXCLUDED.access_count,
+             last_accessed_epoch = EXCLUDED.last_accessed_epoch,
+             merged_generation = EXCLUDED.merged_generation,
+             merged_into = EXCLUDED.merged_into,
+             synced_at = NOW()""",
+                     (
+                         str(chunk.id),
+                         origin_user,
+                         chunk.session_id,
+                         chunk.project,
+                         chunk.chunk_index,
+                        chunk.content,
+                        _to_json(chunk.tool_names),
+                        _to_json(chunk.files_read),
+                        _to_json(chunk.files_modified),
+                        chunk.user_prompt,
+                        chunk.created_at_epoch,
+                        chunk.access_count,
+                        chunk.last_accessed_epoch,
+                        chunk.merged_generation,
+                        str(chunk.merged_into) if chunk.merged_into else None,
+                    ),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+
+    def upsert_chunks_batch(self, chunks: list[MemoryChunk], origin_user: str) -> int:
+        """チャンクをバッチで UPSERT する。"""
+        if not chunks:
+            return 0
+        conn = self._get_conn()
+        count = 0
+        try:
+            with conn.cursor() as cur:
+                for chunk in chunks:
+                    cur.execute(
+                        """INSERT INTO memory_chunks
+             (id, origin_user, session_id, project, chunk_index, content,
+              tool_names, files_read, files_modified, user_prompt,
+              created_at_epoch, access_count, last_accessed_epoch,
+              merged_generation, merged_into, synced_at)
+             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             ON CONFLICT (origin_user, session_id, chunk_index) DO UPDATE SET
+                content = EXCLUDED.content,
+                tool_names = EXCLUDED.tool_names,
+                files_read = EXCLUDED.files_read,
+               files_modified = EXCLUDED.files_modified,
+               user_prompt = EXCLUDED.user_prompt,
+               access_count = EXCLUDED.access_count,
+               last_accessed_epoch = EXCLUDED.last_accessed_epoch,
+               merged_generation = EXCLUDED.merged_generation,
+               merged_into = EXCLUDED.merged_into,
+               synced_at = NOW()""",
+                        (
+                            str(chunk.id),
+                            origin_user,
+                            chunk.session_id,
+                            chunk.project,
+                            chunk.chunk_index,
+                            chunk.content,
+                            _to_json(chunk.tool_names),
+                            _to_json(chunk.files_read),
+                            _to_json(chunk.files_modified),
+                            chunk.user_prompt,
+                            chunk.created_at_epoch,
+                            chunk.access_count,
+                            chunk.last_accessed_epoch,
+                            chunk.merged_generation,
+                            str(chunk.merged_into) if chunk.merged_into else None,
+                        ),
+                    )
+                    count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+        return count
+
+    # --- sessions ---
+
+    def upsert_session(self, session: Session, origin_user: str) -> None:
+        """セッションを UPSERT する。"""
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO sessions
+           (id, origin_user, session_id, project, started_at_epoch, chunk_count,
+            branch, commit_hash, uncommitted_count, ended_at_epoch, project_profile_id, synced_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+           ON CONFLICT (origin_user, session_id) DO UPDATE SET
+              chunk_count = EXCLUDED.chunk_count,
+              branch = EXCLUDED.branch,
+              commit_hash = EXCLUDED.commit_hash,
+             uncommitted_count = EXCLUDED.uncommitted_count,
+             ended_at_epoch = EXCLUDED.ended_at_epoch,
+             project_profile_id = EXCLUDED.project_profile_id,
+             synced_at = NOW()""",
+                     (
+                         str(session.id),
+                         origin_user,
+                         session.session_id,
+                         session.project,
+                         session.started_at_epoch,
+                        session.chunk_count,
+                        session.branch,
+                        session.commit_hash,
+                        session.uncommitted_count,
+                        session.ended_at_epoch,
+                        session.project_profile_id,
+                    ),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+
+    def upsert_sessions_batch(self, sessions: list[Session], origin_user: str) -> int:
+        """セッションをバッチで UPSERT する。"""
+        if not sessions:
+            return 0
+        conn = self._get_conn()
+        count = 0
+        try:
+            with conn.cursor() as cur:
+                for session in sessions:
+                    cur.execute(
+                        """INSERT INTO sessions
+             (id, origin_user, session_id, project, started_at_epoch, chunk_count,
+              branch, commit_hash, uncommitted_count, ended_at_epoch, project_profile_id, synced_at)
+             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             ON CONFLICT (origin_user, session_id) DO UPDATE SET
+                chunk_count = EXCLUDED.chunk_count,
+                branch = EXCLUDED.branch,
+                commit_hash = EXCLUDED.commit_hash,
+               uncommitted_count = EXCLUDED.uncommitted_count,
+               ended_at_epoch = EXCLUDED.ended_at_epoch,
+               project_profile_id = EXCLUDED.project_profile_id,
+               synced_at = NOW()""",
+                        (
+                            str(session.id),
+                            origin_user,
+                            session.session_id,
+                            session.project,
+                            session.started_at_epoch,
+                            session.chunk_count,
+                            session.branch,
+                            session.commit_hash,
+                            session.uncommitted_count,
+                            session.ended_at_epoch,
+                            session.project_profile_id,
+                        ),
+                    )
+                    count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+        return count
+
+    # --- instincts ---
+
+    def upsert_instinct(self, instinct: Instinct) -> None:
+        """インスティンクトを UPSERT する。"""
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO instincts
+           (id, origin_user, instinct_id, scope, project_id, trigger_text,
+            confidence, domain, content, created_at_epoch, updated_at_epoch, synced_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+           ON CONFLICT (origin_user, instinct_id, scope, COALESCE(project_id, '')) DO UPDATE SET
+              trigger_text = EXCLUDED.trigger_text,
+              confidence = EXCLUDED.confidence,
+              domain = EXCLUDED.domain,
+              content = EXCLUDED.content,
+              updated_at_epoch = EXCLUDED.updated_at_epoch,
+              synced_at = NOW()""",
+                    (
+                        instinct.id,
+                        instinct.origin_user,
+                        instinct.instinct_id,
+                        instinct.scope,
+                        instinct.project_id,
+                        instinct.trigger_text,
+                        instinct.confidence,
+                        instinct.domain,
+                        instinct.content,
+                        instinct.created_at_epoch,
+                        instinct.updated_at_epoch,
+                    ),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+
+    def upsert_instincts_batch(self, instincts: list[Instinct]) -> int:
+        """インスティンクトをバッチで UPSERT する。"""
+        if not instincts:
+            return 0
+        conn = self._get_conn()
+        count = 0
+        try:
+            with conn.cursor() as cur:
+                for inst in instincts:
+                    cur.execute(
+                        """INSERT INTO instincts
+             (id, origin_user, instinct_id, scope, project_id, trigger_text,
+              confidence, domain, content, created_at_epoch, updated_at_epoch, synced_at)
+             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             ON CONFLICT (origin_user, instinct_id, scope, COALESCE(project_id, '')) DO UPDATE SET
+                trigger_text = EXCLUDED.trigger_text,
+                confidence = EXCLUDED.confidence,
+                domain = EXCLUDED.domain,
+                content = EXCLUDED.content,
+                updated_at_epoch = EXCLUDED.updated_at_epoch,
+                synced_at = NOW()""",
+                        (
+                            inst.id,
+                            inst.origin_user,
+                            inst.instinct_id,
+                            inst.scope,
+                            inst.project_id,
+                            inst.trigger_text,
+                            inst.confidence,
+                            inst.domain,
+                            inst.content,
+                            inst.created_at_epoch,
+                            inst.updated_at_epoch,
+                        ),
+                    )
+                    count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+        return count
+
+    # --- adrs ---
+
+    def upsert_adr(self, adr: Adr) -> None:
+        """ADR を UPSERT する。"""
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO adrs
+           (id, origin_user, project, adr_number, title, status, content,
+            created_at_epoch, updated_at_epoch, synced_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+           ON CONFLICT (origin_user, project, adr_number) DO UPDATE SET
+             title = EXCLUDED.title,
+             status = EXCLUDED.status,
+             content = EXCLUDED.content,
+             updated_at_epoch = EXCLUDED.updated_at_epoch,
+             synced_at = NOW()""",
+                    (
+                        adr.id,
+                        adr.origin_user,
+                        adr.project,
+                        adr.adr_number,
+                        adr.title,
+                        adr.status,
+                        adr.content,
+                        adr.created_at_epoch,
+                        adr.updated_at_epoch,
+                    ),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+
+    def upsert_adrs_batch(self, adrs: list[Adr]) -> int:
+        """ADR をバッチで UPSERT する。"""
+        if not adrs:
+            return 0
+        conn = self._get_conn()
+        count = 0
+        try:
+            with conn.cursor() as cur:
+                for adr in adrs:
+                    cur.execute(
+                        """INSERT INTO adrs
+             (id, origin_user, project, adr_number, title, status, content,
+              created_at_epoch, updated_at_epoch, synced_at)
+             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             ON CONFLICT (origin_user, project, adr_number) DO UPDATE SET
+               title = EXCLUDED.title,
+               status = EXCLUDED.status,
+               content = EXCLUDED.content,
+               updated_at_epoch = EXCLUDED.updated_at_epoch,
+               synced_at = NOW()""",
+                        (
+                            adr.id,
+                            adr.origin_user,
+                            adr.project,
+                            adr.adr_number,
+                            adr.title,
+                            adr.status,
+                            adr.content,
+                            adr.created_at_epoch,
+                            adr.updated_at_epoch,
+                        ),
+                    )
+                    count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+        return count
+
+    # --- event_logs ---
+
+    def insert_event_log(self, event: EventLog) -> None:
+        """イベントログを INSERT する（重複は無視）。"""
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO event_logs
+           (id, origin_user, event_type, project_id, content, created_at_epoch, synced_at)
+           VALUES (%s, %s, %s, %s, %s, %s, NOW())
+           ON CONFLICT (id) DO NOTHING""",
+                    (
+                        event.id,
+                        event.origin_user,
+                        event.event_type,
+                        event.project_id,
+                        event.content,
+                        event.created_at_epoch,
+                    ),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+
+    def insert_event_logs_batch(self, events: list[EventLog]) -> int:
+        """イベントログをバッチで INSERT する。"""
+        if not events:
+            return 0
+        conn = self._get_conn()
+        count = 0
+        try:
+            with conn.cursor() as cur:
+                for event in events:
+                    cur.execute(
+                        """INSERT INTO event_logs
+             (id, origin_user, event_type, project_id, content, created_at_epoch, synced_at)
+             VALUES (%s, %s, %s, %s, %s, %s, NOW())
+             ON CONFLICT (id) DO NOTHING""",
+                        (
+                            event.id,
+                            event.origin_user,
+                            event.event_type,
+                            event.project_id,
+                            event.content,
+                            event.created_at_epoch,
+                        ),
+                    )
+                    count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+        return count
+
+    # --- embeddings (memory_chunks_vec) ---
+
+    def upsert_embeddings_batch(self, embeddings: list[tuple[str, list[float]]]) -> int:
+        """エンベディングをバッチで UPSERT する。
+
+        Args:
+            embeddings: (chunk_id, embedding_vector) のリスト
+
+        Returns:
+            UPSERT した件数
+        """
+        if not embeddings:
+            return 0
+        conn = self._get_conn()
+        count = 0
+        try:
+            with conn.cursor() as cur:
+                for chunk_id, vec in embeddings:
+                    # pgvector 形式に変換: [0.1, 0.2, ...] → '[0.1,0.2,...]'
+                    vec_str = "[" + ",".join(str(v) for v in vec) + "]"
+                    cur.execute(
+                        """INSERT INTO memory_chunks_vec (chunk_id, embedding)
+               VALUES (%s, %s::vector)
+               ON CONFLICT (chunk_id) DO UPDATE SET
+                 embedding = EXCLUDED.embedding""",
+                        (chunk_id, vec_str),
+                    )
+                    count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+        return count
+
+    # --- 検索メソッド ---
+
+    def vec_search(
+        self,
+        embedding: list[float],
+        limit: int = 20,
+        *,
+        exclude_origin_user: str | None = None,
+    ) -> list[tuple[str, float]]:
+        """pgvector を使ったベクトル近傍検索。
+
+        Args:
+            embedding: クエリベクトル
+            limit: 結果件数
+            exclude_origin_user: 除外する origin_user（チーム検索で自分を除く）
+
+        Returns:
+            (chunk_id, distance) のリスト（距離が小さいほど類似）
+        """
+        conn = self._get_conn()
+        try:
+            vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+            with conn.cursor() as cur:
+                if exclude_origin_user is not None:
+                    # memory_chunks_vec には origin_user が無いので JOIN で絞り込む
+                    cur.execute(
+                        """SELECT v.chunk_id, v.embedding <-> %s::vector AS distance
+             FROM memory_chunks_vec v
+             JOIN memory_chunks c ON v.chunk_id = c.id
+             WHERE c.origin_user <> %s
+             ORDER BY distance
+             LIMIT %s""",
+                        (vec_str, exclude_origin_user, limit),
+                    )
+                else:
+                    cur.execute(
+                        """SELECT chunk_id, embedding <-> %s::vector AS distance
+             FROM memory_chunks_vec
+             ORDER BY distance
+             LIMIT %s""",
+                        (vec_str, limit),
+                    )
+                return [(row[0], row[1]) for row in cur.fetchall()]
+        finally:
+            self._put_conn(conn)
+
+    def fts_search(
+        self,
+        query: str,
+        limit: int = 20,
+        *,
+        exclude_origin_user: str | None = None,
+    ) -> list[tuple[str, float]]:
+        """pg_trgm を使った全文類似検索。
+
+        Args:
+            query: 検索クエリ
+            limit: 結果件数
+            exclude_origin_user: 除外する origin_user（チーム検索で自分を除く）
+
+        Returns:
+            (chunk_id, similarity) のリスト（類似度が高いほど関連）
+        """
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                if exclude_origin_user is not None:
+                    cur.execute(
+                        """SELECT id, similarity(content, %s) AS sim
+             FROM memory_chunks
+             WHERE content %% %s AND origin_user <> %s
+             ORDER BY sim DESC
+             LIMIT %s""",
+                        (query, query, exclude_origin_user, limit),
+                    )
+                else:
+                    cur.execute(
+                        """SELECT id, similarity(content, %s) AS sim
+             FROM memory_chunks
+             WHERE content %% %s
+             ORDER BY sim DESC
+             LIMIT %s""",
+                        (query, query, limit),
+                    )
+                return [(row[0], row[1]) for row in cur.fetchall()]
+        finally:
+            self._put_conn(conn)
+
+    def team_search(
+        self,
+        query: str,
+        embedding: list[float],
+        limit: int = 20,
+        *,
+        exclude_origin_user: str | None = None,
+    ) -> list[tuple[str, float]]:
+        """FTS + ベクトル検索を RRF で統合したチーム横断検索。
+
+        Args:
+            query: 検索テキスト
+            embedding: クエリのエンベディング
+            limit: 結果件数
+            exclude_origin_user: 除外する origin_user（自分を除外してチームの経験だけを返す）
+
+        Returns:
+            (chunk_id, rrf_score) のリスト
+        """
+        fts_results = self.fts_search(query, limit=limit * 2, exclude_origin_user=exclude_origin_user)
+        vec_results = self.vec_search(embedding, limit=limit * 2, exclude_origin_user=exclude_origin_user)
+
+        # RRF 統合（距離→類似度に変換してランク統合）
+        k = 60
+        scores: dict[str, float] = {}
+        for rank, (chunk_id, _) in enumerate(fts_results):
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (k + rank + 1)
+        for rank, (chunk_id, _) in enumerate(vec_results):
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (k + rank + 1)
+
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        return ranked[:limit]
+
+    def fetch_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, dict]:
+        """chunk_id 群に対応する memory_chunks の行を一括取得する。
+
+        Args:
+            chunk_ids: 取得対象の chunk_id リスト
+
+        Returns:
+            chunk_id → 行の辞書（キーは id, origin_user, content, user_prompt, project,
+            created_at_epoch, tool_names, files_read, files_modified）。
+            空入力の場合は空の辞書を返す。
+        """
+        import json as _json
+
+        if not chunk_ids:
+            return {}
+
+        placeholders = ",".join(["%s"] * len(chunk_ids))
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT id, origin_user, content, user_prompt, project,
+                 created_at_epoch, tool_names, files_read, files_modified
+           FROM memory_chunks WHERE id IN ({placeholders})""",
+                    list(chunk_ids),
+                )
+                rows = cur.fetchall()
+        finally:
+            self._put_conn(conn)
+
+        def _parse_list(val: object) -> list[str]:
+            if isinstance(val, list):
+                return [str(x) for x in val]
+            if isinstance(val, str) and val:
+                try:
+                    parsed = _json.loads(val)
+                    return [str(x) for x in parsed] if isinstance(parsed, list) else []
+                except (ValueError, TypeError):
+                    return []
+            return []
+
+        result: dict[str, dict] = {}
+        for row in rows:
+            cid = str(row[0])
+            result[cid] = {
+                "id": cid,
+                "origin_user": row[1] or "",
+                "content": row[2] or "",
+                "user_prompt": row[3] or "",
+                "project": row[4] or "",
+                "created_at_epoch": int(row[5]) if row[5] is not None else 0,
+                "tool_names": _parse_list(row[6]),
+                "files_read": _parse_list(row[7]),
+                "files_modified": _parse_list(row[8]),
+            }
+        return result
+
+
+    # --- interaction_logs ---
+
+    def upsert_interaction_logs_batch(self, logs: list[InteractionLog]) -> int:
+        """インタラクションログをバッチで UPSERT する。"""
+        if not logs:
+            return 0
+        conn = self._get_conn()
+        count = 0
+        try:
+            with conn.cursor() as cur:
+                for entry in logs:
+                    cur.execute(
+                        """INSERT INTO interaction_logs
+             (id, origin_user, session_id, project,
+              user_prompt_full, user_prompt_hash,
+              ai_response_summary, ai_response_tool_plan,
+              chunk_id, execution_outcome, tool_error_count,
+              interaction_index, created_at_epoch, synced_at)
+             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             ON CONFLICT (origin_user, session_id, interaction_index) DO UPDATE SET
+               ai_response_summary = EXCLUDED.ai_response_summary,
+               ai_response_tool_plan = EXCLUDED.ai_response_tool_plan,
+               execution_outcome = EXCLUDED.execution_outcome,
+               tool_error_count = EXCLUDED.tool_error_count,
+               synced_at = NOW()""",
+                        (
+                            entry.id,
+                            entry.origin_user,
+                            entry.session_id,
+                            entry.project,
+                            entry.user_prompt_full,
+                            entry.user_prompt_hash,
+                            entry.ai_response_summary,
+                            entry.ai_response_tool_plan,
+                            entry.chunk_id,
+                            entry.execution_outcome,
+                            entry.tool_error_count,
+                            entry.interaction_index,
+                            entry.created_at_epoch,
+                        ),
+                    )
+                    count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+        return count
+
+    # --- project_profiles ---
+
+    def upsert_project_profiles_batch(self, profiles: list[ProjectProfile]) -> int:
+        """プロジェクトプロファイルをバッチで UPSERT する。"""
+        if not profiles:
+            return 0
+        conn = self._get_conn()
+        count = 0
+        try:
+            with conn.cursor() as cur:
+                for profile in profiles:
+                    cur.execute(
+                        """INSERT INTO project_profiles
+             (id, origin_user, project, project_path,
+              languages, frameworks, primary_language,
+              test_command, build_command, scope_hint,
+              detected_at_epoch, last_updated_epoch, detection_confidence, synced_at)
+             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             ON CONFLICT (origin_user, project) DO UPDATE SET
+               project_path = EXCLUDED.project_path,
+               languages = EXCLUDED.languages,
+               frameworks = EXCLUDED.frameworks,
+               primary_language = EXCLUDED.primary_language,
+               test_command = EXCLUDED.test_command,
+               build_command = EXCLUDED.build_command,
+               scope_hint = EXCLUDED.scope_hint,
+               last_updated_epoch = EXCLUDED.last_updated_epoch,
+               detection_confidence = EXCLUDED.detection_confidence,
+               synced_at = NOW()""",
+                        (
+                            profile.id,
+                            profile.origin_user,
+                            profile.project,
+                            profile.project_path,
+                            _to_json(profile.languages),
+                            _to_json(profile.frameworks),
+                            profile.primary_language,
+                            profile.test_command,
+                            profile.build_command,
+                            profile.scope_hint,
+                            profile.detected_at_epoch,
+                            profile.last_updated_epoch,
+                            profile.detection_confidence,
+                        ),
+                    )
+                    count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+        return count
+
+    # --- mem_item_runs ---
+
+    def upsert_mem_item_runs_batch(self, runs: list[MemItemRun]) -> int:
+        """アイテム実行記録をバッチで UPSERT する。"""
+        if not runs:
+            return 0
+        conn = self._get_conn()
+        count = 0
+        try:
+            with conn.cursor() as cur:
+                for run in runs:
+                    cur.execute(
+                        """INSERT INTO mem_item_runs
+             (id, origin_user, session_id, project,
+              skill_name, skill_trigger, outcome,
+              tools_used, files_modified_count, duration_seconds,
+              interaction_log_id, created_at_epoch, item_type, synced_at)
+             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               item_type = EXCLUDED.item_type,
+               synced_at = NOW()""",
+                        (
+                            run.id,
+                            run.origin_user,
+                            run.session_id,
+                            run.project,
+                            run.skill_name,
+                            run.skill_trigger,
+                            run.outcome,
+                            _to_json(run.tools_used),
+                            run.files_modified_count,
+                            run.duration_seconds,
+                            run.interaction_log_id,
+                            run.created_at_epoch,
+                            run.item_type,
+                        ),
+                    )
+                    count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put_conn(conn)
+        return count
+
+
+def _to_json(val: list | dict | None) -> str | None:
+    """リストや辞書を JSON 文字列に変換。"""
+    if val is None:
+        return None
+    import json
+
+    return json.dumps(val, ensure_ascii=False)

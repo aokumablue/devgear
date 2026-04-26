@@ -1,0 +1,337 @@
+#!/usr/bin/env python3
+"""
+アクティブセッション中の学習内容を永続化する SessionEnd フック
+
+Stop イベント時（各応答後）に実行されます。セッショントランスクリプト
+（stdin JSON の transcript_path 経由）から意味のあるサマリーを抽出し、
+セッション間の継続性のためセッションファイルを更新します。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+
+from devgear.hooks.hook_common import parse_json_object, read_raw_stdin
+from devgear.lib.core_utils import (
+    ensure_dir,
+    get_date_string,
+    get_project_name,
+    get_session_id_short,
+    get_sessions_dir,
+    get_time_string,
+    log,
+    read_file,
+    run_command,
+    strip_ansi,
+    write_file,
+)
+from devgear.lib.slim_text import compact_line
+
+SUMMARY_START_MARKER = "<!-- devgear:SUMMARY:START -->"
+SUMMARY_END_MARKER = "<!-- devgear:SUMMARY:END -->"
+SESSION_SEPARATOR = "\n---\n"
+
+
+def extract_session_summary(transcript_path: str) -> dict | None:
+    """セッショントランスクリプトから意味のあるサマリーを抽出
+
+    userMessages、toolsUsed、filesModified、totalMessages を含む dict を返す
+    """
+    content = read_file(transcript_path)
+    if not content:
+        return None
+
+    lines = content.split("\n")
+    user_messages = []
+    tools_used = set()
+    files_modified = set()
+    parse_errors = 0
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            entry = json.loads(line)
+
+            # ユーザーメッセージを収集（圧縮して 200 文字まで）
+            if (
+                entry.get("type") == "user"
+                or entry.get("role") == "user"
+                or entry.get("message", {}).get("role") == "user"
+            ):
+                # 直接の content とネストされた message.content の両方に対応（JSONL 形式）
+                raw_content = entry.get("message", {}).get("content") or entry.get("content")
+                text = ""
+                if isinstance(raw_content, str):
+                    text = raw_content
+                elif isinstance(raw_content, list):
+                    text = " ".join(str(c.get("text", "")) if isinstance(c, dict) else "" for c in raw_content)
+
+                cleaned = strip_ansi(text).strip()
+                if cleaned:
+                    compacted = compact_line(cleaned, 200)
+                    if compacted:
+                        user_messages.append(compacted)
+
+            # ツール名と変更されたファイルを収集（直接の tool_use エントリ）
+            if entry.get("type") == "tool_use" or entry.get("tool_name"):
+                tool_name = entry.get("tool_name") or entry.get("name") or ""
+                if tool_name:
+                    tools_used.add(tool_name)
+
+                tool_input = entry.get("tool_input") or entry.get("input") or {}
+                file_path = tool_input.get("file_path") or tool_input.get("path") or ""
+                if file_path and tool_name in ("Edit", "Write"):
+                    files_modified.add(file_path)
+
+            # Assistant メッセージの content ブロックからツール使用を抽出（JSONL 形式）
+            if entry.get("type") == "assistant" and isinstance(entry.get("message", {}).get("content"), list):
+                for block in entry["message"]["content"]:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        tool_name = block.get("name", "")
+                        if tool_name:
+                            tools_used.add(tool_name)
+
+                        block_input = block.get("input") or {}
+                        file_path = block_input.get("file_path") or block_input.get("path") or ""
+                        if file_path and tool_name in ("Edit", "Write"):
+                            files_modified.add(file_path)
+
+        except json.JSONDecodeError:
+            parse_errors += 1
+
+    if parse_errors > 0:
+        log(f"[SessionEnd] Skipped {parse_errors}/{len(lines)} unparseable transcript lines")
+
+    if not user_messages:
+        return None
+
+    return {
+        "userMessages": user_messages[-10:],  # 最後の 10 個のユーザーメッセージ
+        "toolsUsed": sorted(tools_used)[:20],
+        "filesModified": sorted(files_modified)[:30],
+        "totalMessages": len(user_messages),
+    }
+
+
+def get_session_metadata() -> dict:
+    """セッションメタデータ（プロジェクト、ブランチ、ワークツリー）を取得"""
+    branch_result = run_command("git rev-parse --abbrev-ref HEAD")
+
+    return {
+        "project": get_project_name() or "unknown",
+        "branch": branch_result["output"] if branch_result["success"] and branch_result["output"] else "unknown",
+        "worktree": str(Path.cwd()),
+    }
+
+
+def extract_header_field(header: str, label: str) -> str | None:
+    """マークダウンヘッダーからフィールド値を抽出"""
+    pattern = rf"\*\*{re.escape(label)}:\*\*\s*(.+)$"
+    match = re.search(pattern, header, re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def build_session_header(today: str, current_time: str, metadata: dict, existing_content: str = "") -> str:
+    """メタデータを含むセッションヘッダーを構築"""
+    heading_match = re.search(r"^#\s+.+$", existing_content, re.MULTILINE)
+    heading = heading_match.group(0) if heading_match else f"# Session: {today}"
+    date = extract_header_field(existing_content, "Date") or today
+    started = extract_header_field(existing_content, "Started") or current_time
+
+    return "\n".join(
+        [
+            heading,
+            f"**Date:** {date}",
+            f"**Started:** {started}",
+            f"**Last Updated:** {current_time}",
+            f"**Project:** {metadata['project']}",
+            f"**Branch:** {metadata['branch']}",
+            f"**Worktree:** {metadata['worktree']}",
+            "",
+        ]
+    )
+
+
+def merge_session_header(content: str, today: str, current_time: str, metadata: dict) -> str | None:
+    """セッションヘッダーを新しいメタデータとマージ"""
+    separator_index = content.find(SESSION_SEPARATOR)
+    if separator_index == -1:
+        return None
+
+    existing_header = content[:separator_index]
+    body = content[separator_index + len(SESSION_SEPARATOR) :]
+    next_header = build_session_header(today, current_time, metadata, existing_header)
+    return f"{next_header}{SESSION_SEPARATOR}{body}"
+
+
+def build_summary_section(summary: dict) -> str:
+    """抽出されたデータからサマリーセクションを構築"""
+    section = ""
+
+    # タスク（ユーザーメッセージから — 改行を折りたたみバッククォートをエスケープ）
+    section += "### Tasks\n"
+    for msg in summary["userMessages"]:
+        escaped = compact_line(msg, 200).replace("\n", " ").replace("`", "\\`")
+        if not escaped:
+            continue
+        section += f"- {escaped}\n"
+    section += "\n"
+
+    # 変更されたファイル
+    if summary["filesModified"]:
+        section += "### Files Modified\n"
+        for f in summary["filesModified"]:
+            section += f"- {f}\n"
+        section += "\n"
+
+    # 使用されたツール
+    if summary["toolsUsed"]:
+        section += f"### 使用したツール\n{', '.join(summary['toolsUsed'])}\n\n"
+
+    section += f"### 統計\n- ユーザーメッセージ総数: {summary['totalMessages']}\n"
+
+    return section
+
+
+def build_summary_block(summary: dict) -> str:
+    """マーカー付きの完全なサマリーブロックを構築"""
+    return f"{SUMMARY_START_MARKER}\n{build_summary_section(summary).strip()}\n{SUMMARY_END_MARKER}"
+
+
+def _record_stop_event(summary: dict | None, metadata: dict) -> None:
+    """Stop 時にセッションイベントを event_logs に記録（AI コンテキスト注入なし）。"""
+    try:
+        import time
+
+        from devgear.lib.core_utils import get_git_user_name
+        from devgear.mem.database import Database, EventLog
+        from devgear.mem.settings import Settings
+
+        settings = Settings.load()
+        content = json.dumps(
+            {
+                "project": metadata.get("project"),
+                "branch": metadata.get("branch"),
+                "tools_used": summary.get("toolsUsed") if summary else [],
+                "files_modified": summary.get("filesModified") if summary else [],
+                "total_messages": summary.get("totalMessages") if summary else 0,
+            },
+            ensure_ascii=False,
+        )
+        event = EventLog(
+            origin_user=get_git_user_name(),
+            event_type="session_stop",
+            content=content,
+            created_at_epoch=int(time.time()),
+            project_id=metadata.get("project"),
+        )
+        db = Database(settings.db_path)
+        try:
+            db.store_event_log(event)
+        finally:
+            db.close()
+        log(f"[SessionEnd] event_log recorded: project={metadata.get('project')}")
+    except Exception as e:
+        log(f"[SessionEnd] event_log error: {e}")
+
+
+def run(raw_input: str) -> str:
+    """セッション終了フックを実行。入力をそのまま返す（パススルー）"""
+    try:
+        input_data = parse_json_object(raw_input)
+        transcript_path = input_data.get("transcript_path") if input_data else None
+
+        if not transcript_path:
+            # フォールバック: 後方互換性のため環境変数を試す
+            transcript_path = os.environ.get("CLAUDE_TRANSCRIPT_PATH")
+
+        sessions_dir = get_sessions_dir()
+        today = get_date_string()
+        short_id = get_session_id_short()
+        session_file = sessions_dir / f"{today}-{short_id}-session.tmp"
+        session_metadata = get_session_metadata()
+
+        ensure_dir(sessions_dir)
+
+        current_time = get_time_string()
+
+        # トランスクリプトからサマリーを抽出
+        if transcript_path and not Path(transcript_path).exists():
+            log(f"[SessionEnd] Transcript not found: {transcript_path}")
+        summary = extract_session_summary(transcript_path) if transcript_path and Path(transcript_path).exists() else None
+
+        if session_file.exists():
+            existing = read_file(session_file)
+            updated_content = existing
+
+            if existing:
+                merged = merge_session_header(existing, today, current_time, session_metadata)
+                if merged:
+                    updated_content = merged
+                else:
+                    log(f"[SessionEnd] Failed to normalize header in {session_file}")
+
+            # 新しいサマリーがある場合は、生成されたサマリーブロックのみを更新
+            if summary and updated_content:
+                summary_block = build_summary_block(summary)
+
+                if SUMMARY_START_MARKER in updated_content and SUMMARY_END_MARKER in updated_content:
+                    pattern = re.escape(SUMMARY_START_MARKER) + r"[\s\S]*?" + re.escape(SUMMARY_END_MARKER)
+                    updated_content = re.sub(pattern, summary_block, updated_content)
+                else:
+                    # サマリーマーカーが存在する前に作成されたファイルのマイグレーションパス
+                    updated_content = re.sub(
+                        r"## (?:Session Summary|Current State)[\s\S]*?$",
+                        f"{summary_block}\n\n### 次回セッションへの引継ぎ\n-\n\n### 読み込むコンテキスト\n```\n[relevant files]\n```\n",
+                        updated_content,
+                    )
+
+            if updated_content:
+                write_file(session_file, updated_content)
+
+            log(f"[SessionEnd] Updated session file: {session_file}")
+        else:
+            # 新しいセッションファイルを作成
+            if summary:
+                summary_section = f"{build_summary_block(summary)}\n\n### 次回セッションへの引継ぎ\n-\n\n### 読み込むコンテキスト\n```\n[relevant files]\n```"
+            else:
+                summary_section = "## 現在の状態\n\n[セッションコンテキストをここに記載]\n\n### 完了済み\n- [ ]\n\n### 進行中\n- [ ]\n\n### 次回セッションへの引継ぎ\n-\n\n### 読み込むコンテキスト\n```\n[relevant files]\n```"
+
+            template = (
+                f"{build_session_header(today, current_time, session_metadata)}{SESSION_SEPARATOR}{summary_section}\n"
+            )
+
+            write_file(session_file, template)
+            log(f"[SessionEnd] Created session file: {session_file}")
+
+        _record_stop_event(summary, session_metadata)
+
+    except Exception as err:
+        log(f"[SessionEnd] Error: {err}")
+
+    return raw_input
+
+
+def main() -> int:
+    """スクリプトとして実行されたときのエントリポイント"""
+
+    try:
+        raw = read_raw_stdin()
+        output = run(raw)
+        print(output, end="")
+        return 0
+    except Exception as err:
+        log(f"[SessionEnd] Error: {err}")
+        return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

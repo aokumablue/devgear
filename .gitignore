@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+*.orig
+uv.lock
+.coverage
+skill.skill
+tmp/
+# .github/
+# plugins/devgear-*/

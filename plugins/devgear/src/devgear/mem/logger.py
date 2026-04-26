@@ -1,0 +1,56 @@
+"""構造化ロギング — ファイル出力 + stderr"""
+
+from __future__ import annotations
+
+import logging
+import sys
+import threading
+from datetime import datetime
+from pathlib import Path
+
+_FORMATTER = logging.Formatter(
+    "[%(asctime)s.%(msecs)03d] [%(levelname)s] [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+_initialized = False
+_lock = threading.Lock()
+
+
+def setup(log_dir: Path, level: str = "info") -> None:
+    """ロガーを初期化する。アプリケーション起動時に1度だけ呼ぶ。"""
+    global _initialized
+    with _lock:
+        if _initialized:
+            return
+        _initialized = True
+
+    root = logging.getLogger("devgear.mem")
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    # ファイルハンドラ
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"mem-{datetime.now():%Y-%m-%d}.log"
+    fh = logging.FileHandler(log_path, encoding="utf-8")
+    fh.setFormatter(_FORMATTER)
+    root.addHandler(fh)
+
+    # stderr ハンドラ（WARNINGなど）
+    sh = logging.StreamHandler(sys.stderr)
+    sh.setLevel(logging.WARNING)
+    sh.setFormatter(_FORMATTER)
+    root.addHandler(sh)
+
+
+def reset() -> None:
+    """テスト用: ロガーをリセットする。"""
+    global _initialized
+    with _lock:
+        _initialized = False
+    root = logging.getLogger("devgear.mem")
+    root.handlers.clear()
+
+
+def get(component: str) -> logging.Logger:
+    """コンポーネント名でロガーを取得する。"""
+    return logging.getLogger(f"devgear.mem.{component}")
