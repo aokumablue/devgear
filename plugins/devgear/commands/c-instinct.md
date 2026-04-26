@@ -72,24 +72,24 @@ projectスコープのインスティンクトをglobalスコープへ昇格。
 蓄積されたインスティンクトからスキル・コマンド・エージェント候補を検出・生成。
 
 ```bash
-/c-instinct evolve                 # インスティンクト分析・進化案を表示
-/c-instinct evolve --generate      # 進化済みファイルも生成
+/c-instinct evolve             # インスティンクト分析・進化案を表示
+/c-instinct evolve --generate  # 進化済みファイルも生成
 ```
 
-**フラグ:** `--generate`（evolveで検出した新しいスキル/コマンド/エージェントをファイル生成）
+**フラグ:** `--generate`（検出した新しいスキル/コマンド/エージェントをファイル生成）
 
-**進化ルール（3分類）:**
-- **Command** — ユーザーが明示的に呼び出す操作・繰り返し可能な手順・ユーザー入力が不可欠
-- **Skill** — 自動発火する振る舞い・パターンマッチ型トリガー・背後で隠れた効率化
-- **Agent** — 複雑な多段階処理・複数の独立した検証が必要・分離の恩恵が大きい
-
-**実施内容（6ステップ）:**
+**実施内容:**
 1. 現在のプロジェクトコンテキスト検出
 2. project / global のインスティンクト読む（ID衝突時はproject優先）
 3. トリガー/ドメインパターンごとに分類
 4. Skill候補（2件以上同パターンクラスタ）・Command候補・Agent候補を特定
 5. 昇格候補（project→global）を提示
 6. `--generate` 時は `evolved/{skills,commands,agents}/` 配下にファイル生成
+
+**進化ルール（3分類）:**
+- **Command** — ユーザーが明示的に呼び出す操作・繰り返し可能な手順・ユーザー入力が不可欠
+- **Skill** — 自動発火する振る舞い・パターンマッチ型トリガー・背後で隠れた効率化
+- **Agent** — 複雑な多段階処理・複数の独立した検証が必要・分離の恩恵が大きい
 
 **生成ファイルフロントマター形式:**
 ```yaml
@@ -103,7 +103,8 @@ evolved_from: [{instinct-ids}]
 ## 永続メモリ
 
 search: `instinct applied used`
-record: `{"event_type": "instinct-{action}", "content": "{summary}"}` / evolve時は `{"event_type": "evolve", "content": "Evolved: X skills, Y commands, Z agents from N instincts"}`
+record: `{"event_type": "instinct-{action}", "content": "{summary}"}`
+record (evolve): `{"event_type": "evolve", "content": "Evolved: X skills, Y commands, Z agents from N instincts"}`
 参照: 進化決定履歴 / クラスタリングルール / 昇格成功率
 
 ## 引数

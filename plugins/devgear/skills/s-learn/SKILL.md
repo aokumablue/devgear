@@ -107,11 +107,9 @@ search: `{instinct_id} confidence` / `instinct conflict {domain}` / `instinct gl
 record: `{"event_type": "instinct-update", "content": "Updated {instinct_id}: confidence {old} -> {new}"}`
 参照: 進化履歴 / 矛盾検出 / クロスプロジェクト分析 / 昇格判断
 
----
-
 ## 手動評価モード（Manual Eval）
 
-セッション終了後に、パターン抽出を手動で精査したい場合に使用。`s-learn` の自動学習（フックベース）を補完する手動検証フロー。
+セッション終了後にパターン抽出を手動で精査する場合に使用する。自動学習（フックベース）を補完する手動検証フロー。
 
 ### 抽出対象（4カテゴリ）
 
@@ -122,7 +120,9 @@ record: `{"event_type": "instinct-update", "content": "Updated {instinct_id}: co
 
 ### 手順（7ステップ）
 
-**Step 1-2:** 抽出可能パターンの確認 → 最価値知見を特定
+**Step 1:** 抽出可能なパターンを確認する
+
+**Step 2:** 最も価値ある知見を特定する
 
 **Step 3:** 保存先決定ロジック
 - **Global** (`~/.claude/skills/learned/`) — 2プロジェクト以上で使える汎用パターン
@@ -181,4 +181,5 @@ origin: auto-extracted
 - タイプミス・単純な構文エラーは抽出しない（セッション中に修正可能）
 - 一回限りの問題は抽出しない（今後のセッションで再利用できるパターンのみ）
 - skillは1パターンに集中（複数パターンの場合は複数skillを分割）
-- **Absorb判定時は新規作成でなく既存skillに追記** — 関連する既存skillが無い場合のみ新規作成
+- Absorb 判定時は既存 skill に追記する（新規作成しない）
+- 関連する既存 skill が存在しない場合のみ新規作成する

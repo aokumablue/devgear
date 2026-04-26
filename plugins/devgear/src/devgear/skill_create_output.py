@@ -44,215 +44,72 @@ ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _wrap(code: str, value: Any) -> str:
-    """ANSI カラーコードで値をラップします。
-
-    Args:
-        code: ANSI コードです。
-        value: ラップする値です。
-
-    Returns:
-        カラーコード付きの文字列を返します。
-
-    Raises:
-        例外は発生しません。
-    """
+    """ANSI カラーコードで値をラップする。"""
     return f"\x1b[{code}m{value}{ANSI_RESET}"
 
 
 def bold(value: Any) -> str:
-    """太字のANSIコードで値をラップします。
-
-    Args:
-        value: ラップする値です。
-
-    Returns:
-        太字カラーコード付きの文字列を返します。
-
-    Raises:
-        例外は発生しません。
-    """
+    """太字で装飾する。"""
     return _wrap(ANSI_CODES["bold"], value)
 
 
 def cyan(value: Any) -> str:
-    """シアンのANSIコードで値をラップします。
-
-    Args:
-        value: ラップする値です。
-
-    Returns:
-        シアンカラーコード付きの文字列を返します。
-
-    Raises:
-        例外は発生しません。
-    """
+    """シアン色で装飾する。"""
     return _wrap(ANSI_CODES["cyan"], value)
 
 
 def green(value: Any) -> str:
-    """緑色のANSIコードで値を装飾する。
-
-    Args:
-        value: 装飾する値
-
-    Returns:
-        ANSIエスケープコードで装飾された文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """緑色で装飾する。"""
     return _wrap(ANSI_CODES["green"], value)
 
 
 def yellow(value: Any) -> str:
-    """黄色のANSIコードで値を装飾する。
-
-    Args:
-        value: 装飾する値
-
-    Returns:
-        ANSIエスケープコードで装飾された文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """黄色で装飾する。"""
     return _wrap(ANSI_CODES["yellow"], value)
 
 
 def magenta(value: Any) -> str:
-    """マゼンタ色のANSIコードで値を装飾する。
-
-    Args:
-        value: 装飾する値
-
-    Returns:
-        ANSIエスケープコードで装飾された文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """マゼンタ色で装飾する。"""
     return _wrap(ANSI_CODES["magenta"], value)
 
 
 def gray(value: Any) -> str:
-    """グレー色のANSIコードで値を装飾する。
-
-    Args:
-        value: 装飾する値
-
-    Returns:
-        ANSIエスケープコードで装飾された文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """グレー色で装飾する。"""
     return _wrap(ANSI_CODES["gray"], value)
 
 
 def white(value: Any) -> str:
-    """白色のANSIコードで値を装飾する。
-
-    Args:
-        value: 装飾する値
-
-    Returns:
-        ANSIエスケープコードで装飾された文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """白色で装飾する。"""
     return _wrap(ANSI_CODES["white"], value)
 
 
 def red(value: Any) -> str:
-    """赤色のANSIコードで値を装飾する。
-
-    Args:
-        value: 装飾する値
-
-    Returns:
-        ANSIエスケープコードで装飾された文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """赤色で装飾する。"""
     return _wrap(ANSI_CODES["red"], value)
 
 
 def dim(value: Any) -> str:
-    """暗くしたANSIコードで値を装飾する。
-
-    Args:
-        value: 装飾する値
-
-    Returns:
-        ANSIエスケープコードで装飾された文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """暗色で装飾する。"""
     return _wrap(ANSI_CODES["dim"], value)
 
 
 def bg_cyan(value: Any) -> str:
-    """シアン背景のANSIコードで値を装飾する。
-
-    Args:
-        value: 装飾する値
-
-    Returns:
-        ANSIエスケープコードで装飾された文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """シアン背景で装飾する。"""
     return _wrap(ANSI_CODES["bgCyan"], value)
 
 
 def strip_ansi(value: Any) -> str:
-    """文字列からANSIエスケープコードを除去します。
-
-    Args:
-        value: 処理対象の文字列です。
-
-    Returns:
-        ANSIコードが除去された文字列を返します。
-
-    Raises:
-        例外は発生しません。
-    """
+    """文字列から ANSI エスケープコードを除去する。"""
     return ANSI_ESCAPE_RE.sub("", str(value))
 
 
 def _js_round(value: float) -> int:
-    """JavaScript 風の丸め処理を実装します。
-
-    Args:
-        value: 丸める浮動小数点数です。
-
-    Returns:
-        丸められた整数を返します。
-
-    Raises:
-        例外は発生しません。
-    """
+    """JavaScript 風の丸め処理（0.5 以上を切り上げ）。"""
     return int(math.floor(value + 0.5))
 
 
 def box(title: Any, content: Any, width: int = 60) -> str:
-    """枠付きのボックスを生成します。
-
-    Args:
-        title: ボックスのタイトルです。
-        content: ボックスの内容です。
-        width: ボックスの幅です（デフォルト: 60）。
-
-    Returns:
-        整形されたボックス文字列を返します。
-
-    Raises:
-        例外は発生しません。
-    """
+    """枠付きのボックスを生成する。"""
     lines = str(content).split("\n")
     inner_width = max(0, width - len(str(title)) - 5)
     top = f"{BOX['topLeft']}{BOX['horizontal']} {bold(cyan(title))} {BOX['horizontal'] * inner_width}{BOX['topRight']}"
@@ -266,18 +123,7 @@ def box(title: Any, content: Any, width: int = 60) -> str:
 
 
 def progress_bar(percent: int, width: int = 30) -> str:
-    """プログレスバーを生成します。
-
-    Args:
-        percent: 進捗率（0-100）です。
-        width: バーの幅（デフォルト: 30）です。
-
-    Returns:
-        プログレスバーの文字列を返します。
-
-    Raises:
-        例外は発生しません。
-    """
+    """プログレスバーを生成する。"""
     filled = min(width, max(0, _js_round(width * percent / 100)))
     empty = width - filled
     bar = green("█" * filled) + gray("░" * empty)
@@ -285,17 +131,7 @@ def progress_bar(percent: int, width: int = 30) -> str:
 
 
 def render_header(repo_name: Any) -> str:
-    """スキル作成ツールのヘッダーを生成します。
-
-    Args:
-        repo_name: リポジトリ名です。
-
-    Returns:
-        整形されたヘッダー文字列を返します。
-
-    Raises:
-        例外は発生しません。
-    """
+    """スキル作成ツールのヘッダーを生成する。"""
     subtitle = f"Extracting patterns from {cyan(repo_name)}"
     subtitle_padding = max(0, 59 - len(strip_ansi(subtitle)))
     title_inner = bold("  devgear Skill Creator".ljust(64))
@@ -312,17 +148,7 @@ def render_header(repo_name: Any) -> str:
 
 
 def render_analysis_results(data: dict[str, Any]) -> str:
-    """解析結果のサマリーを生成します。
-
-    Args:
-        data: 解析結果を含む辞書です。
-
-    Returns:
-        整形された解析結果の文字列を返します。
-
-    Raises:
-        例外は発生しません。
-    """
+    """解析結果のサマリーを生成する。"""
     content = (
         f"\n{bold('Commits Analyzed:')} {yellow(data.get('commits', ''))}\n"
         f"{bold('Time Range:')}       {gray(data.get('timeRange', ''))}\n"
@@ -333,17 +159,7 @@ def render_analysis_results(data: dict[str, Any]) -> str:
 
 
 def render_patterns(items: Any) -> str:
-    """発見されたパターンをフォーマットして表示する。
-
-    Args:
-        items: パターンのリストまたは None
-
-    Returns:
-        整形されたパターン表示文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """発見されたパターンをフォーマットして表示する。"""
     patterns = list(items or [])
     lines = ["", bold(cyan("Key Patterns Discovered:")), gray("─" * 50)]
 
@@ -367,17 +183,7 @@ def render_patterns(items: Any) -> str:
 
 
 def render_instincts(items: Any) -> str:
-    """生成された本能をフォーマットして表示する。
-
-    Args:
-        items: 本能のリストまたは None
-
-    Returns:
-        整形された本能表示文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """生成された本能をフォーマットして表示する。"""
     instincts = list(items or [])
     lines = []
     for index, instinct in enumerate(instincts):
@@ -389,18 +195,7 @@ def render_instincts(items: Any) -> str:
 
 
 def render_output(skill_path: Any, instincts_path: Any) -> str:
-    """生成されたスキルファイルと本能ファイルのパスを表示する。
-
-    Args:
-        skill_path: スキルファイルのパス
-        instincts_path: 本能ファイルのパス
-
-    Returns:
-        整形された出力パス表示文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """生成されたスキルファイルと本能ファイルのパスを表示する。"""
     return "\n".join(
         [
             "",
@@ -418,17 +213,7 @@ def render_output(skill_path: Any, instincts_path: Any) -> str:
 
 
 def render_next_steps() -> str:
-    """次のステップを案内するメッセージを表示する。
-
-    Args:
-        引数はありません。
-
-    Returns:
-        次のステップを案内する文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """次のステップを案内するメッセージを表示する。"""
     content = (
         f"\n{yellow('1.')} Review the generated SKILL.md\n"
         f"{yellow('2.')} Import instincts: {cyan('/c-instinct-import <path>')}\n"
@@ -439,17 +224,7 @@ def render_next_steps() -> str:
 
 
 def render_footer(service: str | None = None) -> str:
-    """フッター情報を表示する。
-
-    Args:
-        引数はありません。
-
-    Returns:
-        フッター文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """フッター情報を表示する。"""
     hosting_service = normalize_git_hosting_service(service or detect_git_hosting_service())
     hosting_label = get_git_hosting_service_label(hosting_service)
 
@@ -469,17 +244,7 @@ def render_footer(service: str | None = None) -> str:
 
 
 def render_analyze_phase(data: dict[str, Any]) -> str:
-    """分析フェーズの進捗を表示する。
-
-    Args:
-        data: 分析データを含む辞書
-
-    Returns:
-        整形された分析フェーズ表示文字列
-
-    Raises:
-        例外は発生しません。
-    """
+    """分析フェーズの進捗を表示する。"""
     commits = data.get("commits", 0)
     steps = [
         "Parsing git history...",
@@ -517,17 +282,7 @@ Commands:
 
 
 def _read_json_stdin(default: Any = None) -> Any:
-    """標準入力から JSON を読み取ります。
-
-    Args:
-        default: 入力が空の場合のデフォルト値です。
-
-    Returns:
-        パースされた JSON データ、または空の場合はデフォルト値を返します。
-
-    Raises:
-        json.JSONDecodeError: JSON のパースに失敗した場合に発生します。
-    """
+    """標準入力から JSON を読み取る。空入力の場合は default を返す。"""
     raw = sys.stdin.read()
     if not raw.strip():
         return default
@@ -535,17 +290,7 @@ def _read_json_stdin(default: Any = None) -> Any:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """スキル作成出力フォーマッタのメインエントリポイントです。
-
-    Args:
-        argv: コマンドライン引数のリストです。
-
-    Returns:
-        成功時は 0、エラー時は 1 を返します。
-
-    Raises:
-        例外はキャッチされ、エラーメッセージとして出力されます。
-    """
+    """CLI のエントリポイント。"""
     args = list(sys.argv[1:] if argv is None else argv)
 
     if not args or args[0] in {"-h", "--help"}:
