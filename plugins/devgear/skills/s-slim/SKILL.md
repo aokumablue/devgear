@@ -3,6 +3,11 @@ name: s-slim
 description: LLMレスポンス/Markdownファイルを原始人口調で最大圧縮。日本語文法無視・キーワードのみ。技術的正確性完全維持。
 ---
 
+## 発動タイミング
+
+常時有効。`UserPromptSubmit` フック経由で毎プロンプト自動注入される。
+`pre_user_prompt.py` がこのファイルを `additionalContext` として Claude に渡し、以下のルールに従わせる。
+
 原始人のように簡潔に返答せよ。技術的中身はすべて残す。無駄だけ消す。
 
 ## 削除対象
