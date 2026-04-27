@@ -67,12 +67,73 @@ bash scripts/install.sh
 
 PostgreSQL でメモリをチーム共有する場合のみ設定する。
 
+#### PostgreSQL セットアップ
+
+チーム同期を有効化するには、PostgreSQL サーバとデータベースを用意する必要があります。
+
+**オプション 1: Docker 環境**（推奨）
+
+既存 PostgreSQL がない場合や、テスト・開発環境を素早く構築したい場合：
+
+```bash
+bash scripts/pg_setup.sh docker17 --workspace /path/to/workspace
+```
+
+PostgreSQL 17 + pgvector が Docker で起動し、`.env` に接続情報が保存されます。
+
+**オプション 2: 既存 PostgreSQL への設定**
+
+PostgreSQL がサーバに既にインストール済みの場合：
+
+```bash
+# ユーザ登録、DB 作成、pg_vector インストール、スキーマ初期化を実行
+bash scripts/pg_setup_native.sh
+```
+
+デフォルト値：
+
+- ユーザ: `devgear`
+- DB: `devgear_mem`
+- ホスト: `localhost`
+- ポート: `5432`
+
+パスワードは自動生成されます。生成されたパスワードは以下の場所に自動保存：
+
+```bash
+~/.devgear/pg_credentials.json
+```
+
+このファイルは権限 0600（オーナーのみ読み取り可能）で保護されています。
+
+カスタマイズは以下のオプションで可能：
+
+```bash
+bash scripts/pg_setup_native.sh --user myuser --password mypass --db mydb --host prod.example.com
+bash scripts/pg_setup_native.sh --credentials-file /path/to/custom_creds.json  # 保存先変更
+bash scripts/pg_setup_native.sh --help  # 全オプション表示
+```
+
+#### 接続設定
+
+両スクリプト完了後、`~/.devgear/settings.json` を以下のように更新：
+
 | 項目 | 説明 | デフォルト |
 | --- | --- | --- |
 | `mem.sync.enabled` | PostgreSQL 同期を有効化するかどうか | `false` |
 | `mem.sync.postgres_url` | 接続 URL（`enabled=true` のときは必須） | `""` |
 
-同期元ユーザー名は git の `user.name` を自動で使う。ランタイム状態（最終同期時刻・成否など）は `~/.devgear/sync_state.json` に分離保存される。
+```json
+{
+  "mem": {
+    "sync": {
+      "enabled": true,
+      "postgres_url": "postgresql://devgear:PASSWORD@localhost:5432/devgear_mem"
+    }
+  }
+}
+```
+
+ランタイム状態（最終同期時刻・成否など）は `~/.devgear/sync_state.json` に分離保存されます。
 
 - フックは常に strict として動作する
 - `mem` は `observe` → `session-init` → `SessionEnd` を中心に履歴を引き継ぎ、必要時のみ `SessionStart` で文脈を注入する
