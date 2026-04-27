@@ -24,6 +24,20 @@ SKIP_SCHEMA=0
 FORCE=0
 CREDENTIALS_FILE=""
 
+# ディストリビューション検出関数
+detect_distro() {
+  if [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    echo "${ID}"
+  elif [[ -f /etc/redhat-release ]]; then
+    echo "rhel"
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "macos"
+  else
+    echo "unknown"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -44,9 +58,15 @@ Options:
   --help, -h               このヘルプを表示
 
 Requirements:
-  - PostgreSQL がインストール済み
+  - PostgreSQL がインストール済み（バージョン 13 以上推奨）
   - psql がアクセス可能（通常、postgres ユーザで実行するか、.pgpass を設定）
   - sudo（pg_vector インストール時）
+  - ビルド環境：gcc、make、git
+
+Supported Operating Systems:
+  - Ubuntu / Debian (apt)
+  - RockyLinux / RHEL / CentOS / AlmaLinux (yum/dnf)
+  - macOS (homebrew)
 
 EOF
 }
@@ -70,6 +90,46 @@ generate_password() {
   openssl rand -hex 16
 }
 
+get_package_manager() {
+  local distro="$1"
+  case "${distro}" in
+    ubuntu|debian)
+      echo "apt"
+      ;;
+    rhel|rocky|centos|fedora|almalinux)
+      if command -v dnf >/dev/null 2>&1; then
+        echo "dnf"
+      else
+        echo "yum"
+      fi
+      ;;
+    macos)
+      echo "brew"
+      ;;
+    *)
+      fail "Unsupported distribution: ${distro}. Please install required packages manually."
+      ;;
+  esac
+}
+
+install_package() {
+  local package="$1"
+  local pkg_mgr="$2"
+
+  case "${pkg_mgr}" in
+    apt)
+      sudo apt-get update >/dev/null 2>&1
+      sudo apt-get install -y "${package}" >/dev/null 2>&1
+      ;;
+    yum|dnf)
+      sudo "${pkg_mgr}" install -y "${package}" >/dev/null 2>&1
+      ;;
+    brew)
+      brew install "${package}" >/dev/null 2>&1
+      ;;
+  esac
+}
+
 check_psql_access() {
   local test_sql="SELECT 1;"
   if ! echo "${test_sql}" | psql -h "${PG_HOST}" -p "${PG_PORT}" -U postgres -d postgres >/dev/null 2>&1; then
@@ -80,29 +140,58 @@ check_psql_access() {
 install_pgvector() {
   log "Installing pg_vector..."
 
-  # PostgreSQL 開発ファイルと build tools の確認
-  if ! dpkg-query -W -f='${Status}' postgresql-server-dev-* 2>/dev/null | grep -q "installed"; then
-    log "Installing PostgreSQL development files..."
-    sudo apt-get update
-    sudo apt-get install -y postgresql-server-dev-$(psql -t -U postgres -d postgres -c "SELECT version_num / 10000;" 2>/dev/null || echo "15")
-  fi
+  # ディストリビューション検出
+  local distro pkg_mgr
+  distro="$(detect_distro)"
+  pkg_mgr="$(get_package_manager "${distro}")"
 
-  if ! command -v gcc >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1; then
-    log "Installing build tools..."
-    sudo apt-get update
-    sudo apt-get install -y build-essential
-  fi
+  log "Detected: ${distro} (package manager: ${pkg_mgr})"
 
-  if ! command -v git >/dev/null 2>&1; then
-    log "Installing git..."
-    sudo apt-get update
-    sudo apt-get install -y git
-  fi
-
-  # pg_vector の確認
+  # pg_vector の確認（既に存在するかチェック）
   if psql -h "${PG_HOST}" -p "${PG_PORT}" -U postgres -d postgres -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null 2>&1; then
     log "pg_vector extension is already available"
     return 0
+  fi
+
+  # PostgreSQL 開発ファイルのインストール
+  log "Installing PostgreSQL development files..."
+  case "${distro}" in
+    ubuntu|debian)
+      local pg_version
+      pg_version=$(psql -t -U postgres -d postgres -c "SELECT version_num / 10000;" 2>/dev/null || echo "15")
+      install_package "postgresql-server-dev-${pg_version}" "${pkg_mgr}"
+      ;;
+    rhel|rocky|centos|almalinux|fedora)
+      install_package "postgresql-devel" "${pkg_mgr}"
+      ;;
+    macos)
+      # macOS では PostgreSQL がインストール済みと仮定
+      log "Skipping postgresql-devel on macOS (assuming already installed)"
+      ;;
+  esac
+
+  # Build tools のインストール
+  if ! command -v gcc >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1; then
+    log "Installing build tools..."
+    case "${distro}" in
+      ubuntu|debian)
+        install_package "build-essential" "${pkg_mgr}"
+        ;;
+      rhel|rocky|centos|almalinux|fedora)
+        install_package "gcc" "${pkg_mgr}"
+        install_package "make" "${pkg_mgr}"
+        ;;
+      macos)
+        log "Please install Xcode Command Line Tools: xcode-select --install"
+        fail "Xcode Command Line Tools required"
+        ;;
+    esac
+  fi
+
+  # git のインストール
+  if ! command -v git >/dev/null 2>&1; then
+    log "Installing git..."
+    install_package "git" "${pkg_mgr}"
   fi
 
   log "Compiling and installing pg_vector from source..."

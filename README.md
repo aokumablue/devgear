@@ -90,6 +90,14 @@ PostgreSQL がサーバに既にインストール済みの場合：
 bash scripts/pg_setup_native.sh
 ```
 
+**対応 OS：**
+
+- Ubuntu / Debian（apt）
+- RockyLinux / RHEL / CentOS / AlmaLinux（yum/dnf）
+- macOS（homebrew）
+
+スクリプトが自動的にディストリビューションを検出し、適切なパッケージマネージャを使用します。
+
 デフォルト値：
 
 - ユーザ: `devgear`

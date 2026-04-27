@@ -54,6 +54,16 @@ grep POSTGRES_PASSWORD .env  # パスワード確認
 - `sudo` が利用可能（pg_vector コンパイル時）
 - ビルド環境：gcc、make、git
 
+### 対応 OS
+
+| OS | パッケージマネージャ | 対応状況 |
+| --- | --- | --- |
+| Ubuntu / Debian | apt | ✓ 完全対応 |
+| RockyLinux / RHEL / CentOS / AlmaLinux | yum / dnf | ✓ 完全対応 |
+| macOS | homebrew | ✓ 完全対応（Xcode Command Line Tools 必須） |
+
+スクリプトは自動的にディストリビューションを検出し、適切なパッケージマネージャを使用します。
+
 ### 手順
 
 **基本的な実行:**
