@@ -206,9 +206,15 @@ def test_install_dev_script_runs_user_and_dev_steps(tmp_path: Path) -> None:
     assert (repo / ".venv" / "bin" / "python3").exists()
 
     log = log_path.read_text(encoding="utf-8")
+    log_lines = log.splitlines()
+    editable_idx = next(i for i, line in enumerate(log_lines) if line.startswith("pip:install -e"))
+    torch_idx = next(i for i, line in enumerate(log_lines) if "torch>=2.0" in line)
+
     assert "pip:install --upgrade pip wheel" in log
     assert "pip:install -e" in log
     assert "torch>=2.0" in log
+    assert "--index-url https://download.pytorch.org/whl/cpu" in log_lines[torch_idx]
+    assert torch_idx < editable_idx
     assert "psycopg[binary]" in log
     assert "prefetch" in log
     assert "[dev]" in log

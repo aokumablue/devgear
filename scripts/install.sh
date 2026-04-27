@@ -129,8 +129,9 @@ install_user_python() {
 
   echo "[devgear] Installing Python package dependencies into ${VENV_DIR}"
   "${VENV_PYTHON}" -m pip install --upgrade pip wheel
-  "${VENV_PYTHON}" -m pip install -e "${REPO_ROOT}"
+  # sentence-transformers の依存解決より先に CPU-only torch を固定する
   "${VENV_PYTHON}" -m pip install 'torch>=2.0' --index-url https://download.pytorch.org/whl/cpu
+  "${VENV_PYTHON}" -m pip install -e "${REPO_ROOT}"
   "${VENV_PYTHON}" -m pip install 'psycopg[binary]' 'psycopg-pool'
 
   echo "[devgear] Prefetching embedding model cache"

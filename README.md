@@ -41,7 +41,7 @@ bash scripts/install-dev.sh
 
 ## 設定ファイル
 
-`bash scripts/install.sh` で `~/.devgear/settings.json` を最小構成で生成する。通常利用に必要なランタイム依存（埋め込み、PostgreSQL 連携、モデル事前取得）はこちらに含める。`bash scripts/install-dev.sh` はその上で、テスト/カバレッジやコード品質ツールを追加する。
+`bash scripts/install.sh` で `~/.devgear/settings.json` を最小構成で生成する。通常利用に必要なランタイム依存（埋め込み、PostgreSQL 連携、モデル事前取得）はこちらに含める。PyTorch は CPU-only ホイール（`https://download.pytorch.org/whl/cpu`）を使用し、CUDA/NVIDIA 関連パッケージは導入しない。`bash scripts/install-dev.sh` はその上で、テスト/カバレッジやコード品質ツールを追加する。
 
 大半の項目は自動判定・内部デフォルトで賄うため、ユーザーが通常触るのはチーム同期を有効化するときの `mem.sync.postgres_url` のみ。
 
