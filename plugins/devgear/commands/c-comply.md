@@ -10,7 +10,7 @@ skills・rules・agent 定義が実際に守られているかを次の方法で
 
 1. 任意の `.md` ファイルから期待される行動シーケンス（spec）を自動生成
 2. プロンプト厳密さを段階的に下げながらシナリオ自動生成（supportive → neutral → competing）
-3. `claude -p` を実行し、stream-json経由でtool call traceを取得
+3. LLM CLI（claude/copilot）を実行し、tool call traceを取得
 4. LLMを使ってtool callをspecのステップと照合（正規表現は使わない）
 5. 時系列の順序を決定論的に検証
 6. spec・プロンプト・タイムライン含む自己完結型レポートを生成

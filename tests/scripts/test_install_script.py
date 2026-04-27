@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
+INSTALL_DEV_SCRIPT = ROOT / "scripts" / "install-dev.sh"
 
 
 def run_script(
@@ -18,6 +21,7 @@ def run_script(
     args: list[str],
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """指定したシェルスクリプトを bash で実行して結果を返す。"""
     proc_env = os.environ.copy()
     if env:
         proc_env.update(env)
@@ -32,13 +36,88 @@ def run_script(
     )
 
 
-def test_install_script_prefetches_embedding_model() -> None:
+def write_exec(path: Path, content: str) -> None:
+    """実行可能なシェルスクリプトを書き込む。"""
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def write_fake_python(path: Path, log_path: Path) -> None:
+    """install.sh の呼び出しを記録する python3 スタブを書き込む。"""
+    write_exec(
+        path,
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"REAL_PYTHON={sys.executable!r}\n"
+        f"LOG_PATH={str(log_path)!r}\n"
+        'if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then\n'
+        '  if [[ "${3:-}" == "--help" ]]; then\n'
+        "    exit 0\n"
+        "  fi\n"
+        '  target="${3:-}"\n'
+        '  mkdir -p "${target}/bin"\n'
+        '  ln -sf "$0" "${target}/bin/python3"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then\n'
+        '  echo "pip:${*:3}" >> "${LOG_PATH}"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "${1:-}" == "-m" && "${2:-}" == "ensurepip" ]]; then\n'
+        '  echo "ensurepip:${*:3}" >> "${LOG_PATH}"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "${1:-}" == "-m" && "${2:-}" == "devgear.mem" && "${3:-}" == "setup" ]]; then\n'
+        '  echo "memsetup:${*:3}" >> "${LOG_PATH}"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "${1:-}" == "-" ]]; then\n'
+        "  script=$(cat)\n"
+        '  if [[ "${script}" == *"prefetch_model()"* ]]; then\n'
+        '    echo "prefetch" >> "${LOG_PATH}"\n'
+        "    exit 0\n"
+        "  fi\n"
+        '  printf "%s" "${script}" | "${REAL_PYTHON}" - "${@:2}"\n'
+        "  exit $?\n"
+        "fi\n"
+        'exec "${REAL_PYTHON}" "$@"\n',
+    )
+
+
+def prepare_temp_repo(tmp_path: Path) -> Path:
+    """テスト用の最小リポジトリ構造を tmp_path に構築して返す。"""
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "plugins" / "devgear").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "install.sh", repo / "scripts" / "install.sh")
+    shutil.copy2(ROOT / "scripts" / "install-dev.sh", repo / "scripts" / "install-dev.sh")
+    shutil.copy2(ROOT / "plugins" / "devgear" / "settings.json", repo / "plugins" / "devgear" / "settings.json")
+    return repo
+
+
+def test_install_script_is_user_facing_only() -> None:
+    """install.sh がユーザ向け処理のみを持ち、開発者向け依存を含まないこと。"""
     content = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
-    assert "Prefetching embedding model cache" in content
+    assert 'exec "${SCRIPT_DIR}/install-dev.sh"' in content
     assert "prefetch_model()" in content
-    assert "ensure_settings_json" in content
-    assert "full default settings file" in content
+    assert "torch>=2.0" in content
+    assert "psycopg[binary]" in content
+    assert "ruff" not in content
+    assert "vulture" not in content
+
+
+def test_install_dev_script_contains_developer_extras() -> None:
+    """install-dev.sh が install.sh を呼び出し、開発者向け依存を追加すること。"""
+    content = INSTALL_DEV_SCRIPT.read_text(encoding="utf-8")
+
+    assert "torch>=2.0" not in content
+    assert "psycopg[binary]" not in content
+    assert "prefetch_model()" not in content
+    assert 'bash "${SCRIPT_DIR}/install.sh"' in content
+    assert "[dev]" in content
+    assert "ruff" in content
+    assert "vulture" in content
 
 
 def test_install_script_copies_settings_template(
@@ -71,6 +150,7 @@ def test_install_script_copies_settings_template(
 
 
 def test_install_script_leaves_existing_settings_json_untouched(tmp_path: Path) -> None:
+    """既存の settings.json が存在する場合は上書きせずそのまま保持すること。"""
     home = tmp_path / "home"
     settings_path = home / ".devgear" / "settings.json"
     settings_path.parent.mkdir(parents=True)
@@ -99,3 +179,36 @@ def test_install_script_leaves_existing_settings_json_untouched(tmp_path: Path) 
 
     assert result.returncode == 0, result.stderr
     assert settings_path.read_text(encoding="utf-8") == original
+
+
+def test_install_dev_script_runs_user_and_dev_steps(tmp_path: Path) -> None:
+    """開発者向けスクリプトがユーザ向け導入の後に追加導入を行うこと。"""
+    repo = prepare_temp_repo(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    home.mkdir()
+    log_path = tmp_path / "python.log"
+
+    write_fake_python(bin_dir / "python3", log_path)
+
+    result = run_script(
+        repo / "scripts" / "install-dev.sh",
+        ["--repo-root", str(repo)],
+        env={
+            "HOME": str(home),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (home / ".devgear" / "settings.json").exists()
+    assert (repo / ".venv" / "bin" / "python3").exists()
+
+    log = log_path.read_text(encoding="utf-8")
+    assert "pip:install --upgrade pip wheel" in log
+    assert "pip:install -e" in log
+    assert "torch>=2.0" in log
+    assert "psycopg[binary]" in log
+    assert "prefetch" in log
+    assert "[dev]" in log

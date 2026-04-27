@@ -107,7 +107,7 @@ devgear_run devgear.skills.package_skill <path/to/skill-folder>
 - subagentがないので並列実行はせず1件ずつ進める
 - ブラウザreviewerが使えない場合→会話中で結果を直接見せる
 - baseline比較に依存する定量ベンチマークは省略し、定性的フィードバックを重視
-- 説明文最適化（`claude -p` 使用）は飛ばす
+- 説明文最適化（eval スクリプト使用）は飛ばす
 - 盲検比較は飛ばす
 - 既存スキル更新時は元の名前を保持し、`/tmp/` にコピーしてから編集
 

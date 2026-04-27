@@ -37,8 +37,8 @@ def test_generate_scenarios_sorts_and_renders_prompt(tmp_path: Path, monkeypatch
 
     captured_prompts: list[str] = []
 
-    def fake_run(cmd, capture_output, text, timeout):  # noqa: ANN001
-        captured_prompts.append(cmd[2])
+    def fake_run_cli(args, **kwargs):  # noqa: ANN001
+        captured_prompts.append(args[1])
         return SimpleNamespace(
             returncode=0,
             stdout="""
@@ -59,7 +59,7 @@ scenarios:
             stderr="",
         )
 
-    monkeypatch.setattr(sg.subprocess, "run", fake_run)
+    monkeypatch.setattr(sg, "run_cli", fake_run_cli)
     monkeypatch.setattr(sg, "extract_yaml", lambda text: text)
 
     scenarios = sg.generate_scenarios(skill_path, "steps: []", model="haiku")
@@ -74,7 +74,7 @@ scenarios:
 @pytest.mark.parametrize(
     ("returncode", "stdout", "match"),
     [
-        (1, "oops", "claude -p failed"),
+        (1, "oops", "llm-cli failed"),
         (0, "   ", "empty output"),
     ],
 )
@@ -87,8 +87,8 @@ def test_generate_scenarios_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(sg, "PROMPTS_DIR", prompts_dir)
     monkeypatch.setattr(sg, "extract_yaml", lambda text: text)
     monkeypatch.setattr(
-        sg.subprocess,
-        "run",
+        sg,
+        "run_cli",
         lambda *args, **kwargs: SimpleNamespace(returncode=returncode, stdout=stdout, stderr="boom"),
     )
 
@@ -109,8 +109,8 @@ def test_generate_spec_retries_then_succeeds(tmp_path: Path, monkeypatch: pytest
     parsed_spec = sp.parse_spec(FIXTURES / "tdd_spec.yaml")
     attempts = {"count": 0}
 
-    def fake_run(cmd, capture_output, text, timeout):  # noqa: ANN001
-        prompts.append(cmd[2])
+    def fake_run_cli(args, **kwargs):  # noqa: ANN001
+        prompts.append(args[1])
         return SimpleNamespace(
             returncode=0,
             stdout="""
@@ -131,7 +131,7 @@ steps: []
             raise yaml.YAMLError("bad yaml")
         return parsed_spec
 
-    monkeypatch.setattr(sp.subprocess, "run", fake_run)
+    monkeypatch.setattr(sp, "run_cli", fake_run_cli)
     monkeypatch.setattr(sp, "parse_spec", fake_parse)
 
     result = sp.generate_spec(skill_path, model="haiku", max_retries=1)
@@ -150,8 +150,8 @@ def test_generate_spec_errors_after_retry_exhaustion(tmp_path: Path, monkeypatch
     monkeypatch.setattr(sp, "PROMPTS_DIR", prompts_dir)
     monkeypatch.setattr(sp, "extract_yaml", lambda text: text)
     monkeypatch.setattr(
-        sp.subprocess,
-        "run",
+        sp,
+        "run_cli",
         lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="id: sample\n", stderr=""),
     )
     monkeypatch.setattr(sp, "parse_spec", lambda path: (_ for _ in ()).throw(yaml.YAMLError("bad yaml")))
@@ -160,8 +160,8 @@ def test_generate_spec_errors_after_retry_exhaustion(tmp_path: Path, monkeypatch
         sp.generate_spec(skill_path, max_retries=0)
 
 
-def test_generate_spec_raises_on_claude_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """claude -p が失敗した場合の分岐を通す。"""
+def test_generate_spec_raises_on_llm_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """llm-cli が失敗した場合の分岐を通す。"""
     skill_path = tmp_path / "SKILL.md"
     skill_path.write_text("# skill\n", encoding="utf-8")
     prompts_dir = tmp_path / "prompts"
@@ -169,17 +169,17 @@ def test_generate_spec_raises_on_claude_failure(tmp_path: Path, monkeypatch: pyt
     (prompts_dir / "spec_generator.md").write_text("skill={skill_content}\n", encoding="utf-8")
     monkeypatch.setattr(sp, "PROMPTS_DIR", prompts_dir)
     monkeypatch.setattr(
-        sp.subprocess,
-        "run",
+        sp,
+        "run_cli",
         lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr="boom"),
     )
 
-    with pytest.raises(RuntimeError, match="claude -p failed"):
+    with pytest.raises(RuntimeError, match="llm-cli failed"):
         sp.generate_spec(skill_path)
 
 
-def test_generate_spec_hits_unreachable_when_retries_are_negative(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """max_retries が負数の境界値で最後の分岐を通す。"""
+def test_generate_spec_raises_value_error_when_retries_are_negative(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_retries が負数の場合は ValueError を送出する。"""
     skill_path = tmp_path / "SKILL.md"
     skill_path.write_text("# skill\n", encoding="utf-8")
     prompts_dir = tmp_path / "prompts"
@@ -187,5 +187,5 @@ def test_generate_spec_hits_unreachable_when_retries_are_negative(tmp_path: Path
     (prompts_dir / "spec_generator.md").write_text("skill={skill_content}\n", encoding="utf-8")
     monkeypatch.setattr(sp, "PROMPTS_DIR", prompts_dir)
 
-    with pytest.raises(RuntimeError, match="unreachable"):
+    with pytest.raises(ValueError, match="max_retries must be"):
         sp.generate_spec(skill_path, max_retries=-1)

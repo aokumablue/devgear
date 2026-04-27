@@ -16,6 +16,7 @@ import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+from .cli_runner import detect_cli_binary
 from .utils import parse_skill_md
 
 
@@ -42,13 +43,13 @@ def run_single_query(
 ) -> bool:
     """単一クエリを実行し、スキルがトリガーされたかを返す。
 
-    .claude/commands/ にコマンドファイルを作成して Claude の
+    .claude/commands/ にコマンドファイルを作成して LLM の
     available_skills に見えるようにし、そのうえで生のクエリを使って
-    `claude -p` を実行する。
-    --include-partial-messages を使い、ツール実行後に最終メッセージを
-    待つのではなく、stream event（content_block_start）から早期に
-    トリガー判定する。
+    LLM CLI を実行する。
+    claude 環境では stream-json + --include-partial-messages で早期トリガー判定、
+    copilot 環境では json 出力で完了後に判定する。
     """
+    binary = detect_cli_binary()
     unique_id = uuid.uuid4().hex[:8]
     clean_name = f"{skill_name}-skill-{unique_id}"
     project_commands_dir = Path(project_root) / ".claude" / "commands"
@@ -68,21 +69,28 @@ def run_single_query(
         )
         command_file.write_text(command_content)
 
-        cmd = [
-            "claude",
-            "-p",
-            query,
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-        ]
+        if binary == "claude":
+            cmd = [
+                binary,
+                "-p",
+                query,
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+            ]
+        else:
+            cmd = [
+                binary,
+                "-p",
+                query,
+                "--output-format",
+                "json",
+            ]
         if model:
             cmd.extend(["--model", model])
 
-        # CLAUDECODE 環境変数を外し、
-        # `claude -p` をネスト実行できるようにする。
-        # これは対話端末の衝突回避用で、subprocess での利用は安全。
+        # CLAUDECODE を除去してネスト実行を許可する（対話端末衝突回避）。
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
         process = subprocess.Popen(
@@ -128,7 +136,7 @@ def run_single_query(
                     except json.JSONDecodeError:
                         continue
 
-                    # Early detection via stream events
+                    # stream_event: ストリームイベントで早期判定（claude のみ）
                     if event.get("type") == "stream_event":
                         se = event.get("event", {})
                         se_type = se.get("type", "")
@@ -156,7 +164,7 @@ def run_single_query(
                             if se_type == "message_stop":
                                 return False
 
-                    # Fallback: full assistant message
+                    # assistant: 完全なメッセージで判定（copilot など json 出力時）
                     elif event.get("type") == "assistant":
                         message = event.get("message", {})
                         for content_item in message.get("content", []):
@@ -173,7 +181,7 @@ def run_single_query(
                     elif event.get("type") == "result":
                         return triggered
         finally:
-            # Clean up process on any exit path (return, exception, timeout)
+            # 正常終了・例外・タイムアウトすべての出口でプロセスをクリーンアップする
             if process.poll() is None:
                 process.kill()
                 process.wait()
@@ -270,7 +278,7 @@ def main():
     parser.add_argument("--timeout", type=int, default=30, help="クエリごとのタイムアウト秒数")
     parser.add_argument("--runs-per-query", type=int, default=3, help="クエリごとの実行回数")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="トリガー率のしきい値")
-    parser.add_argument("--model", default=None, help="claude -p に使うモデル（既定: 現在の設定モデル）")
+    parser.add_argument("--model", default=None, help="LLM CLI に使うモデル（既定: 現在の設定モデル）")
     parser.add_argument("--verbose", action="store_true", help="進捗を stderr に表示する")
     args = parser.parse_args()
 
@@ -311,5 +319,5 @@ def main():
     print(json.dumps(output, indent=2))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

@@ -27,13 +27,23 @@ claude plugin install devgear@devgear
 
 ## 関連ソフトウェア/設定ファイルのインストール
 
+### ユーザ向け（最小）
+
 ```bash
 bash scripts/install.sh
 ```
 
+### 開発者向け（追加依存込み）
+
+```bash
+bash scripts/install-dev.sh
+```
+
 ## 設定ファイル
 
-`bash scripts/install.sh` で `~/.devgear/settings.json` を最小構成で生成する。大半の項目は自動判定・内部デフォルトで賄うため、ユーザーが通常触るのはチーム同期を有効化するときの `mem.sync.postgres_url` のみ。
+`bash scripts/install.sh` で `~/.devgear/settings.json` を最小構成で生成する。通常利用に必要なランタイム依存（埋め込み、PostgreSQL 連携、モデル事前取得）はこちらに含める。`bash scripts/install-dev.sh` はその上で、テスト/カバレッジやコード品質ツールを追加する。
+
+大半の項目は自動判定・内部デフォルトで賄うため、ユーザーが通常触るのはチーム同期を有効化するときの `mem.sync.postgres_url` のみ。
 
 最小構成:
 
@@ -98,6 +108,11 @@ bash scripts/pg_setup_native.sh
 
 スクリプトが自動的にディストリビューションを検出し、適切なパッケージマネージャを使用します。
 
+`pg_setup_native.sh` は失敗時に必ず原因を表示するよう改善されています（失敗コマンド、行番号、stderr を保持）。  
+権限不足（sudo 不可）、OS/パッケージマネージャ検出失敗、PostgreSQL 接続失敗時は即時に明示エラーで終了します。
+TTY 実行時はアニメーション付きの進捗表示（spinner）でインストール途中経過を確認できます。
+`ジョブの最良アップデート候補をインストールできません`（dnf）発生時は `--nobest` で安全に再試行します。
+
 デフォルト値：
 
 - ユーザ: `devgear`
@@ -117,6 +132,7 @@ bash scripts/pg_setup_native.sh
 
 ```bash
 bash scripts/pg_setup_native.sh --user myuser --password mypass --db mydb --host prod.example.com
+bash scripts/pg_setup_native.sh --postgres-password '<postgres_password>'  # 管理者パスワードを1回設定
 bash scripts/pg_setup_native.sh --credentials-file /path/to/custom_creds.json  # 保存先変更
 bash scripts/pg_setup_native.sh --help  # 全オプション表示
 ```

@@ -1,4 +1,4 @@
-"""runner モジュールのテスト — claude -p によるシナリオ実行と stream-json 解析。
+"""runner モジュールのテスト — LLM CLI によるシナリオ実行と出力解析。
 
 デシジョンテーブル (_parse_stream_json):
   | # | 入力パターン                                              | 期待結果                                        |
@@ -18,8 +18,8 @@
   | # | 条件                              | 期待結果                         |
   |---|----------------------------------|----------------------------------|
   | 1 | model が ALLOWED_MODELS 外        | ValueError                        |
-  | 2 | model が有効 + claude 成功        | ScenarioRun が返る               |
-  | 3 | claude が returncode!=0           | RuntimeError                     |
+  | 2 | model が有効 + llm-cli 成功       | ScenarioRun が返る               |
+  | 3 | llm-cli が returncode!=0          | RuntimeError                     |
 
 デシジョンテーブル (_safe_sandbox_dir):
   | # | scenario_id                       | 期待動作                         |
@@ -400,7 +400,7 @@ class TestRunScenario:
         assert isinstance(run.observations, tuple)
 
     def test_claude_failure_raises_runtime_error(self, tmp_path: Path) -> None:
-        """ケース3: claude -p が returncode != 0 の場合 RuntimeError が発生する。"""
+        """ケース3: llm-cli が returncode != 0 の場合 RuntimeError が発生する。"""
         scenario = _make_scenario()
         mock_result = MagicMock(returncode=1, stdout="", stderr="error message")
 
@@ -409,7 +409,7 @@ class TestRunScenario:
             patch("devgear.skills.comply.runner._setup_sandbox"),
             patch("subprocess.run", return_value=mock_result),
         ):
-            with pytest.raises(RuntimeError, match="claude -p failed"):
+            with pytest.raises(RuntimeError, match="llm-cli failed"):
                 run_scenario(scenario, model="sonnet")
 
     def test_all_allowed_models_accepted(self, tmp_path: Path) -> None:

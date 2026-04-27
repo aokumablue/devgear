@@ -2,45 +2,33 @@
 """
 eval 結果に基づいてスキル説明を改善する。
 
-run_eval.py の結果を受け取り、`claude -p` を subprocess で呼び出して改善版の説明を生成する。
+run_eval.py の結果を受け取り、LLM CLI を subprocess で呼び出して改善版の説明を生成する。
 """
 
 import argparse
 import json
-import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
+from .cli_runner import run_cli
 from .utils import parse_skill_md
 
 
 def _call_claude(prompt: str, model: str | None, timeout: int = 300) -> str:
-    """stdin に prompt を流して `claude -p` を実行し、テキスト応答を返す。
+    """stdin に prompt を流して LLM CLI を実行し、テキスト応答を返す。
 
     prompt には SKILL.md 全文が入るため argv に載せると長くなりすぎる。
     そのため stdin 経由で渡す。
     """
-    cmd = ["claude", "-p", "--output-format", "text"]
+    args = ["-p", "--output-format", "text"]
     if model:
-        cmd.extend(["--model", model])
+        args.extend(["--model", model])
 
-    # CLAUDECODE 環境変数を外し、
-    # `claude -p` をネスト実行できるようにする。
-    # これは対話端末の衝突回避用で、subprocess での利用は安全。
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-
-    result = subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=timeout,
-    )
+    # CLAUDECODE を除去してネスト実行を許可する（対話端末衝突回避）。
+    result = run_cli(args, stdin_input=prompt, timeout=timeout, strip_claudecode_env=True)
     if result.returncode != 0:
-        raise RuntimeError(f"claude -p exited {result.returncode}\nstderr: {result.stderr}")
+        raise RuntimeError(f"llm-cli exited {result.returncode}\nstderr: {result.stderr}")
     return result.stdout
 
 
@@ -156,13 +144,13 @@ def improve_description(
     if len(description) > 1024:
         shorten_prompt = (
             f"{prompt}\n\n"
-            f"---\n\n"
+            "---\n\n"
             f"A previous attempt produced this description, which at "
             f"{len(description)} characters is over the 1024-character hard limit:\n\n"
             f'"{description}"\n\n'
-            f"Rewrite it to be under 1024 characters while keeping the most "
-            f"important trigger words and intent coverage. Respond with only "
-            f"the new description in <new_description> tags."
+            "Rewrite it to be under 1024 characters while keeping the most "
+            "important trigger words and intent coverage. Respond with only "
+            "the new description in <new_description> tags."
         )
         shorten_text = _call_claude(shorten_prompt, model)
         match = re.search(r"<new_description>(.*?)</new_description>", shorten_text, re.DOTALL)
@@ -189,7 +177,7 @@ def main():
     parser.add_argument("--eval-results", required=True, help="eval 結果 JSON へのパス（run_eval.py の出力）")
     parser.add_argument("--skill-path", required=True, help="スキルディレクトリへのパス")
     parser.add_argument("--history", default=None, help="history JSON へのパス（過去の試行）")
-    parser.add_argument("--model", required=True, help="改善に使うモデル")
+    parser.add_argument("--model", required=True, help="改善に使うモデル（LLM CLI に渡す）")
     parser.add_argument("--verbose", action="store_true", help="思考内容を stderr に表示する")
     args = parser.parse_args()
 
@@ -239,5 +227,5 @@ def main():
     print(json.dumps(output, indent=2))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

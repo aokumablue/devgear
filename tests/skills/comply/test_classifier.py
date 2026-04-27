@@ -1,6 +1,6 @@
 """comply/classifier モジュールのユニットテスト。
 
-テスト対象: _parse_classification (純粋ロジック) と classify_events の subprocess ブランチ。
+テスト対象: _parse_classification (純粋ロジック) と classify_events の run_cli ブランチ。
 
 デシジョンテーブル:
   _parse_classification:
@@ -13,13 +13,13 @@
 
   classify_events:
     - 空トレース → 空 dict (LLM 呼び出し不要)
-    - subprocess 成功 → _parse_classification の結果を返す
-    - subprocess 失敗 (returncode != 0) → RuntimeError
+    - run_cli 成功 → _parse_classification の結果を返す
+    - run_cli 失敗 (returncode != 0) → RuntimeError
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from devgear.skills.comply.classifier import _parse_classification, classify_events
@@ -133,72 +133,73 @@ class TestParseClassification:
 
 
 class TestClassifyEvents:
-    """classify_events の subprocess ブランチテスト"""
+    """classify_events の run_cli ブランチテスト"""
 
     def test_empty_trace_returns_empty_dict(self) -> None:
         spec = _make_spec()
         result = classify_events(spec, trace=[])
         assert result == {}
 
-    def test_subprocess_success_returns_parsed_result(self) -> None:
+    def test_run_cli_success_returns_parsed_result(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from devgear.skills.comply import classifier as clf_mod
+
         spec = _make_spec()
         trace = [_make_event()]
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '{"write_test": [0]}'
-
-        with patch("devgear.skills.comply.classifier.subprocess.run", return_value=mock_result):
-            result = classify_events(spec, trace)
+        monkeypatch.setattr(
+            clf_mod,
+            "run_cli",
+            lambda *args, **kwargs: MagicMock(returncode=0, stdout='{"write_test": [0]}', stderr=""),
+        )
+        result = classify_events(spec, trace)
 
         assert result == {"write_test": [0]}
 
-    def test_subprocess_failure_raises_runtime_error(self) -> None:
+    def test_run_cli_failure_raises_runtime_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from devgear.skills.comply import classifier as clf_mod
+
         spec = _make_spec()
         trace = [_make_event()]
 
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stderr = "claude command not found"
+        monkeypatch.setattr(
+            clf_mod,
+            "run_cli",
+            lambda *args, **kwargs: MagicMock(returncode=1, stdout="", stderr="command not found"),
+        )
+        with pytest.raises(RuntimeError, match="classifier subprocess failed"):
+            classify_events(spec, trace)
 
-        with patch("devgear.skills.comply.classifier.subprocess.run", return_value=mock_result):
-            with pytest.raises(RuntimeError, match="classifier subprocess failed"):
-                classify_events(spec, trace)
+    def test_prompt_contains_step_and_tool_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """run_cli に渡す引数にステップ情報とツール呼び出しが含まれるか確認。"""
+        from devgear.skills.comply import classifier as clf_mod
 
-    def test_prompt_contains_step_and_tool_info(self) -> None:
-        """subprocess に渡すプロンプトにステップ情報とツール呼び出しが含まれるか確認。"""
         spec = _make_spec()
         trace = [_make_event(tool="Read", input_text="some_file.py")]
 
-        calls: list = []
+        captured_args: list = []
 
-        def _capture_run(cmd, **kwargs):
-            calls.append(kwargs.get("input", "") or "")
-            r = MagicMock()
-            r.returncode = 0
-            r.stdout = "{}"
-            return r
+        def _capture_run_cli(args, **kwargs):  # noqa: ANN001
+            captured_args.append(args)
+            return MagicMock(returncode=0, stdout="{}", stderr="")
 
-        with patch("devgear.skills.comply.classifier.subprocess.run", side_effect=_capture_run):
-            classify_events(spec, trace)
+        monkeypatch.setattr(clf_mod, "run_cli", _capture_run_cli)
+        classify_events(spec, trace)
 
-        # subprocess.run が1回呼ばれること
-        assert len(calls) == 1
+        assert len(captured_args) == 1
 
-    def test_custom_model_passed_to_subprocess(self) -> None:
+    def test_custom_model_passed_to_run_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from devgear.skills.comply import classifier as clf_mod
+
         spec = _make_spec()
         trace = [_make_event()]
 
-        captured_cmd: list[list[str]] = []
+        captured_args: list[list[str]] = []
 
-        def _capture(cmd, **kwargs):
-            captured_cmd.append(cmd)
-            r = MagicMock()
-            r.returncode = 0
-            r.stdout = "{}"
-            return r
+        def _capture(args, **kwargs):  # noqa: ANN001
+            captured_args.append(args)
+            return MagicMock(returncode=0, stdout="{}", stderr="")
 
-        with patch("devgear.skills.comply.classifier.subprocess.run", side_effect=_capture):
-            classify_events(spec, trace, model="opus")
+        monkeypatch.setattr(clf_mod, "run_cli", _capture)
+        classify_events(spec, trace, model="opus")
 
-        assert "opus" in captured_cmd[0]
+        assert "opus" in captured_args[0]

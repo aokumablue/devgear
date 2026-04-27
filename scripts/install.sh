@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # install.sh
-# devgear の Python 依存を repo-local の .venv に導入し、埋め込みモデルも事前取得する。
-# 初回の ~/.devgear/settings.json をフルデフォルトで作成する。
+# devgear の Python 依存を repo-local の .venv に導入し、初回の ~/.devgear/settings.json を作成する。
 # 使い方:
 #   bash scripts/install.sh
-#   bash scripts/install.sh \
-#     --repo-root /path/to/repo
+#   bash scripts/install.sh --repo-root /path/to/repo
 #   DEVGEAR_INSTALL_SKIP_PYTHON=1 bash scripts/install.sh
 
 set -euo pipefail
@@ -13,6 +11,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SKIP_PYTHON="${DEVGEAR_INSTALL_SKIP_PYTHON:-0}"
+INSTALL_DEV="${DEVGEAR_INSTALL_DEV:-0}"
+# --dev を除く引数を install-dev.sh へ転送するために正規化して保持する
+NORMALIZED_ARGS=()
 
 usage() {
   cat <<'EOF'
@@ -21,35 +22,38 @@ Usage: bash scripts/install.sh [options]
 Options:
   --repo-root PATH   Repository root (default: script parent)
   --skip-python      Skip Python package installation and venv setup
+  --dev              Run the developer installer instead of the user installer
   --help             Show this help
 
 Environment:
   DEVGEAR_INSTALL_SKIP_PYTHON=1  Skip Python package installation and venv setup
+  DEVGEAR_INSTALL_DEV=1          Run the developer installer instead of the user installer
 EOF
 }
 
+# python3 -m venv が使えるか確認し、なければ OS パッケージでインストールする
 ensure_venv_module() {
-  # python3 -m venv が使えるか確認し、なければ OS パッケージでインストールする
   if python3 -m venv --help >/dev/null 2>&1; then
     return
   fi
 
   echo "[devgear] python3-venv not found. Attempting to install..."
 
-  PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  local py_ver
+  py_ver="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 
   if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update -qq
-    sudo apt-get install -y "python${PY_VER}-venv" \
+    sudo apt-get install -y "python${py_ver}-venv" \
       || sudo apt-get install -y python3-venv
   elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y "python${PY_VER}-devel" python3-virtualenv \
+    sudo dnf install -y "python${py_ver}-devel" python3-virtualenv \
       || sudo dnf install -y python3-virtualenv
   elif command -v yum >/dev/null 2>&1; then
     sudo yum install -y python3-virtualenv
   elif command -v brew >/dev/null 2>&1; then
     # macOS: venv は Python 本体に含まれるため再インストールで解決
-    brew install "python@${PY_VER}" || brew install python3
+    brew install "python@${py_ver}" || brew install python3
   else
     echo "Error: python3-venv が見つからず、自動インストールにも失敗しました。" >&2
     echo "       手動で python3-venv をインストールしてから再実行してください。" >&2
@@ -89,7 +93,6 @@ ensure_settings_json() {
       echo "[devgear] Existing settings file found at ${SETTINGS_PATH}"
       return
     fi
-
     echo "Error: ${SETTINGS_PATH} exists and is not a regular file." >&2
     exit 1
   fi
@@ -116,14 +119,45 @@ PY
   echo "[devgear] Wrote full default settings file: ${SETTINGS_PATH}"
 }
 
+install_user_python() {
+  ensure_virtualenv
+
+  if ! "${VENV_PYTHON}" -m pip --version >/dev/null 2>&1; then
+    echo "[devgear] Bootstrapping pip via ensurepip"
+    "${VENV_PYTHON}" -m ensurepip --upgrade
+  fi
+
+  echo "[devgear] Installing Python package dependencies into ${VENV_DIR}"
+  "${VENV_PYTHON}" -m pip install --upgrade pip wheel
+  "${VENV_PYTHON}" -m pip install -e "${REPO_ROOT}"
+  "${VENV_PYTHON}" -m pip install 'torch>=2.0' --index-url https://download.pytorch.org/whl/cpu
+  "${VENV_PYTHON}" -m pip install 'psycopg[binary]' 'psycopg-pool'
+
+  echo "[devgear] Prefetching embedding model cache"
+  "${VENV_PYTHON}" - <<'PY'
+from devgear.mem.embedding import prefetch_model
+
+prefetch_model()
+PY
+}
+
+# ---- 引数パース ----
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-root)
       REPO_ROOT="$2"
+      NORMALIZED_ARGS+=("--repo-root" "$2")
       shift 2
       ;;
     --skip-python)
       SKIP_PYTHON=1
+      NORMALIZED_ARGS+=("--skip-python")
+      shift
+      ;;
+    --dev)
+      INSTALL_DEV=1
+      # --dev は install-dev.sh へ転送しない（再帰呼び出し防止）
       shift
       ;;
     --help)
@@ -137,12 +171,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# ---- 変数確定（引数パース後に設定） ----
+
 VENV_DIR="${REPO_ROOT}/.venv"
 VENV_PYTHON="${VENV_DIR}/bin/python3"
 : "${HOME:?Error: HOME must be set.}"
 SETTINGS_DIR="${HOME}/.devgear"
 SETTINGS_PATH="${SETTINGS_DIR}/settings.json"
 SETTINGS_TEMPLATE_PATH="${REPO_ROOT}/plugins/devgear/settings.json"
+
+# ---- 前提条件チェック ----
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "Error: python3 is required." >&2
@@ -161,47 +199,16 @@ if sys.version_info < (3, 12):
   raise SystemExit("Error: Python 3.12+ is required.")
 PY
 
+# ---- メイン処理 ----
+
+if [[ "${INSTALL_DEV}" == "1" ]]; then
+  exec "${SCRIPT_DIR}/install-dev.sh" "${NORMALIZED_ARGS[@]}"
+fi
+
 ensure_settings_json
 
 if [[ "${SKIP_PYTHON}" != "1" ]]; then
-  ensure_virtualenv
-
-  if ! "${VENV_PYTHON}" -m pip --version >/dev/null 2>&1; then
-    echo "[devgear] Bootstrapping pip via ensurepip"
-    "${VENV_PYTHON}" -m ensurepip --upgrade
-  fi
-
-  echo "[devgear] Installing Python package dependencies into ${VENV_DIR}"
-  "${VENV_PYTHON}" -m pip install --upgrade pip wheel
-  
-  # torch は CPU-only で十分（CUDA ライブラリなし）
-  echo "[devgear] Installing torch (CPU-only, for sentence-transformers)"
-  "${VENV_PYTHON}" -m pip install 'torch>=2.0' --index-url https://download.pytorch.org/whl/cpu
-  
-  "${VENV_PYTHON}" -m pip install -e "${REPO_ROOT}"
-  "${VENV_PYTHON}" -m pip install 'psycopg[binary]' 'psycopg-pool'
-
-  echo "[devgear] Prefetching embedding model cache"
-  "${VENV_PYTHON}" - <<'PY'
-from devgear.mem.embedding import prefetch_model
-
-prefetch_model()
-PY
-
-  # ruff と vulture はコード品質ゲート (hooks) に必要
-  echo "[devgear] Installing code-quality tools (ruff, vulture)"
-  "${VENV_PYTHON}" -m pip install 'ruff>=0.4' 'vulture>=2.0'
-
-  # PATH にシムリンクを作成 (venv 外から hook が呼べるように)
-  for tool in ruff vulture; do
-    if ! command -v "${tool}" >/dev/null 2>&1; then
-      if [[ -x "${VENV_DIR}/bin/${tool}" ]]; then
-        echo "[devgear] Symlinking ${tool} -> /usr/local/bin/${tool}"
-        sudo ln -sf "${VENV_DIR}/bin/${tool}" "/usr/local/bin/${tool}" 2>/dev/null \
-          || echo "[devgear] Warning: could not symlink ${tool} to /usr/local/bin (no sudo?). Add ${VENV_DIR}/bin to PATH." >&2
-      fi
-    fi
-  done
+  install_user_python
 fi
 
 # プラグインキャッシュ側の launcher.py が venv を発見できるようにシンボリックリンクを作成する。

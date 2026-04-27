@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
 from pathlib import Path
 
 import yaml
 
+from ..cli_runner import run_cli
 from .parser import ComplianceSpec, parse_spec
 from .utils import extract_yaml
 
@@ -21,9 +21,14 @@ def generate_spec(
 ) -> ComplianceSpec:
     """スキル／ルールファイルからコンプライアンス仕様を生成する。
 
-    spec_generator プロンプトで claude -p を呼び出し、YAML出力を解析する。
+    spec_generator プロンプトで LLM CLI を呼び出し、YAML出力を解析する。
     YAML解析エラー時は、エラーフィードバックを付けて再試行する。
+
+    max_retries に負数を渡すと ValueError を送出する。
     """
+    if max_retries < 0:
+        raise ValueError(f"max_retries must be >= 0, got {max_retries}")
+
     skill_content = skill_path.read_text()
     prompt_template = (PROMPTS_DIR / "spec_generator.md").read_text()
     base_prompt = prompt_template.replace("{skill_content}", skill_content)
@@ -40,24 +45,17 @@ def generate_spec(
                 f'that contain colons, e.g.: description: "Use type: description format"'
             )
 
-        result = subprocess.run(
-            ["claude", "-p", prompt, "--model", model, "--output-format", "text"],
-            capture_output=True,
-            text=True,
+        result = run_cli(
+            ["-p", prompt, "--model", model, "--output-format", "text"],
             timeout=120,
         )
 
         if result.returncode != 0:
-            raise RuntimeError(f"claude -p failed: {result.stderr}")
+            raise RuntimeError(f"llm-cli failed: {result.stderr}")
 
         raw_yaml = extract_yaml(result.stdout)
 
-        tmp_path = None
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".yaml",
-            delete=False,
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(raw_yaml)
             tmp_path = Path(f.name)
 
@@ -68,7 +66,8 @@ def generate_spec(
             if attempt == max_retries:
                 raise
         finally:
-            if tmp_path is not None:
-                tmp_path.unlink(missing_ok=True)
+            tmp_path.unlink(missing_ok=True)
 
-    raise RuntimeError("unreachable")
+    # range(max_retries + 1) は max_retries >= 0 のとき必ず1回以上実行されるため
+    # ここには到達しない（上記バリデーションで保証）
+    raise AssertionError("unreachable")

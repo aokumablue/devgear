@@ -64,6 +64,15 @@ grep POSTGRES_PASSWORD .env  # パスワード確認
 
 スクリプトは自動的にディストリビューションを検出し、適切なパッケージマネージャを使用します。
 
+最新版の `pg_setup_native.sh` はサイレント失敗を避けるため、以下を実施します：
+
+- 失敗時に `ERR` トラップで「失敗コマンド・終了コード・行番号」を表示
+- `apt/yum/dnf/brew` と `sudo` の可用性を事前確認
+- 標準エラー出力（`stderr`）を隠さず表示
+- TTY 実行時はアニメーション付き進捗表示（spinner）を表示
+- dnf の `ジョブの最良アップデート候補をインストールできません` 発生時は `--nobest` で再試行
+- PostgreSQL 管理者パスワードは初回1回のみ取得し、実行中は再利用
+
 ### 手順
 
 **基本的な実行:**
@@ -104,6 +113,9 @@ ls -l ~/.devgear/pg_credentials.json
 
 # 別のパスに保存する場合
 bash scripts/pg_setup_native.sh --credentials-file /path/to/my_creds.json
+
+# 管理者パスワードを先に指定（非対話実行向け）
+bash scripts/pg_setup_native.sh --postgres-password '<postgres_password>'
 ```
 
 **カスタム設定:**
@@ -130,6 +142,9 @@ bash scripts/pg_setup_native.sh --no-install-pgvector
 bash scripts/pg_setup_native.sh --skip-schema
 
 # 既存ユーザ・DB を削除して再作成
+bash scripts/pg_setup_native.sh --force
+
+# dnf 系で best-candidate 問題が出る環境でも再試行付きで実行
 bash scripts/pg_setup_native.sh --force
 ```
 
@@ -176,18 +191,27 @@ localhost:5432:*:postgres:postgres_password
 chmod 0600 ~/.pgpass
 ```
 
-**pg_vector インストール失敗**
+**pg_vector / pg_trgm インストール失敗**
 
 ```bash
-# ログを確認
-tail -100 /tmp/pgvector.log
-
-# PostgreSQL 開発ファイルを確認
+# PostgreSQL 開発ファイルを確認（Debian/Ubuntu）
 dpkg -l | grep postgresql-server-dev
 
-# 再実装（開発ファイルの再インストール）
+# pg_trgm 用 contrib パッケージ確認（Debian/Ubuntu）
+dpkg -l | grep postgresql-contrib
+
+# 再実行（必要なら --force）
 sudo apt-get install --reinstall postgresql-server-dev-15
+sudo apt-get install --reinstall postgresql-contrib-15
 bash scripts/pg_setup_native.sh --force
+```
+
+RockyLinux/RHEL 系では `dnf` または `yum` を使って以下を確認してください。
+
+```bash
+dnf list installed | grep -E 'postgresql-devel|postgresql-contrib'
+# または
+yum list installed | grep -E 'postgresql-devel|postgresql-contrib'
 ```
 
 ## 設定ファイルの更新

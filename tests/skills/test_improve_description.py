@@ -1,15 +1,12 @@
-"""Tests for the skill description improvement workflow."""
+"""スキル説明改善ワークフローのテスト。"""
 
 from __future__ import annotations
 
 import json
-import runpy
-import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import devgear.skills.utils as skill_utils
 import pytest
 from devgear.skills import improve_description as imp
 
@@ -17,40 +14,34 @@ from devgear.skills import improve_description as imp
 def test_call_claude_builds_command_and_strips_env(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = {}
 
-    def fake_run(cmd, input, capture_output, text, env, timeout):  # noqa: ANN001
-        seen["cmd"] = cmd
-        seen["input"] = input
-        seen["capture_output"] = capture_output
-        seen["text"] = text
-        seen["env"] = env
+    def fake_run_cli(args, *, stdin_input, timeout, strip_claudecode_env, cwd=None):  # noqa: ANN001
+        seen["args"] = args
+        seen["stdin_input"] = stdin_input
         seen["timeout"] = timeout
+        seen["strip_claudecode_env"] = strip_claudecode_env
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     monkeypatch.setenv("CLAUDECODE", "1")
-    monkeypatch.setenv("OTHER", "value")
-    monkeypatch.setattr(imp.subprocess, "run", fake_run)
+    monkeypatch.setattr(imp, "run_cli", fake_run_cli)
 
     assert imp._call_claude("prompt", "sonnet", timeout=42) == "ok"
-    assert seen["cmd"] == ["claude", "-p", "--output-format", "text", "--model", "sonnet"]
-    assert seen["input"] == "prompt"
-    assert seen["capture_output"] is True
-    assert seen["text"] is True
+    assert seen["args"] == ["-p", "--output-format", "text", "--model", "sonnet"]
+    assert seen["stdin_input"] == "prompt"
     assert seen["timeout"] == 42
-    assert "CLAUDECODE" not in seen["env"]
-    assert seen["env"]["OTHER"] == "value"
+    assert seen["strip_claudecode_env"] is True
 
 
 def test_call_claude_raises_on_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        imp.subprocess,
-        "run",
+        imp,
+        "run_cli",
         lambda *args, **kwargs: SimpleNamespace(returncode=2, stdout="", stderr="boom"),
     )
 
     with pytest.raises(RuntimeError) as exc_info:
         imp._call_claude("prompt", None)
 
-    assert "claude -p exited 2" in str(exc_info.value)
+    assert "llm-cli exited 2" in str(exc_info.value)
     assert "stderr: boom" in str(exc_info.value)
 
 
@@ -214,7 +205,8 @@ def test_main_generates_updated_history(tmp_path: Path, monkeypatch: pytest.Monk
     assert output["history"][-1]["results"] == [{"query": "x", "should_trigger": True, "pass": False, "triggers": 0, "runs": 1}]
 
 
-def test_main_module_entrypoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_module_entrypoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """__main__ ブロック経由の実行が main() と同等に動作することを確認する。"""
     skill_dir = tmp_path / "skill"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text("---\nname: sample\ndescription: old\n---\nBody\n")
@@ -229,11 +221,14 @@ def test_main_module_entrypoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         )
     )
 
-    def fake_run(*args, **kwargs):  # noqa: ANN001
-        return SimpleNamespace(returncode=0, stdout="<new_description>From entrypoint</new_description>", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(skill_utils, "parse_skill_md", lambda path: ("sample", "old", "content"))
+    monkeypatch.setattr(
+        imp,
+        "run_cli",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout="<new_description>From entrypoint</new_description>", stderr=""
+        ),
+    )
+    monkeypatch.setattr(imp, "parse_skill_md", lambda path: ("sample", "old", "content"))
     monkeypatch.setattr(
         sys,
         "argv",
@@ -248,4 +243,7 @@ def test_main_module_entrypoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         ],
     )
 
-    runpy.run_module("devgear.skills.improve_description", run_name="__main__")
+    imp.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["description"] == "From entrypoint"

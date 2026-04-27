@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 from pathlib import Path
 
+from ..cli_runner import run_cli
 from .parser import ComplianceSpec, ObservationEvent
+from .utils import extract_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +28,16 @@ def classify_events(
         return {}
 
     steps_desc = "\n".join(f"- {step.id}: {step.detector.description}" for step in spec.steps)
-
     tool_calls = "\n".join(
-        f"[{i}] {event.tool}: input={event.input[:500]} output={event.output[:200]}" for i, event in enumerate(trace)
+        f"[{i}] {event.tool}: input={event.input[:500]} output={event.output[:200]}"
+        for i, event in enumerate(trace)
     )
 
     prompt_template = (PROMPTS_DIR / "classifier.md").read_text()
     prompt = prompt_template.replace("{steps_description}", steps_desc).replace("{tool_calls}", tool_calls)
 
-    result = subprocess.run(
-        ["claude", "-p", prompt, "--model", model, "--output-format", "text"],
-        capture_output=True,
-        text=True,
+    result = run_cli(
+        ["-p", prompt, "--model", model, "--output-format", "text"],
         timeout=60,
     )
 
@@ -49,15 +48,15 @@ def classify_events(
 
 
 def _parse_classification(text: str) -> dict[str, list[int]]:
-    """LLMの分類出力を {step_id: [event_indices]} に変換する。"""
-    text = text.strip()
-    # Markdownのフェンスを除去
-    lines = text.splitlines()
-    if lines and lines[0].startswith("```"):
-        lines = lines[1:]
-    if lines and lines[-1].startswith("```"):
-        lines = lines[:-1]
-    cleaned = "\n".join(lines)
+    """LLMの分類出力を {step_id: [event_indices]} に変換する。
+
+    Markdownフェンスを除去してからJSONとして解析し、
+    {step_id: [event_index, ...]} の形式で返す。
+    list でない値は除外する。
+    """
+    cleaned = extract_yaml(text)
+    if not cleaned:
+        return {}
 
     try:
         parsed = json.loads(cleaned)

@@ -1,4 +1,8 @@
-"""claude -p でシナリオを実行し、stream-json 出力からツール呼び出しを解析する。"""
+"""LLM CLI でシナリオを実行し、ツール呼び出しを解析する。
+
+claude 環境: stream-json 出力をリアルタイム解析。
+copilot 環境: json 出力を完了後に一括解析。
+"""
 
 from __future__ import annotations
 
@@ -11,11 +15,13 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..cli_runner import build_output_format_args, build_tools_args, detect_cli_binary
 from .parser import ObservationEvent
 from .scenario_generator import Scenario
 
 SANDBOX_BASE = Path(tempfile.gettempdir()) / "s-comply-sandbox"
 ALLOWED_MODELS = frozenset({"haiku", "sonnet", "opus"})
+_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 
 
 @dataclass(frozen=True)
@@ -31,30 +37,35 @@ def run_scenario(
     max_turns: int = 30,
     timeout: int = 300,
 ) -> ScenarioRun:
-    """シナリオを実行し、stream-json 出力からツール呼び出しを抽出する。"""
+    """シナリオを実行し、ツール呼び出しを抽出する。
+
+    claude 環境では stream-json、copilot 環境では json を使用する。
+    """
     if model not in ALLOWED_MODELS:
         raise ValueError(f"Unknown model: {model!r}. Allowed: {ALLOWED_MODELS}")
 
+    binary = detect_cli_binary()
     sandbox_dir = _safe_sandbox_dir(scenario.id)
     _setup_sandbox(sandbox_dir, scenario)
 
+    cmd = [
+        binary,
+        "-p",
+        scenario.prompt,
+        "--model",
+        model,
+        "--max-turns",
+        str(max_turns),
+        "--add-dir",
+        str(sandbox_dir),
+        *build_tools_args(binary, _ALLOWED_TOOLS),
+        *build_output_format_args(binary, "stream-json"),
+    ]
+    if binary == "claude":
+        cmd.append("--verbose")
+
     result = subprocess.run(
-        [
-            "claude",
-            "-p",
-            scenario.prompt,
-            "--model",
-            model,
-            "--max-turns",
-            str(max_turns),
-            "--add-dir",
-            str(sandbox_dir),
-            "--allowedTools",
-            "Read,Write,Edit,Bash,Glob,Grep",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-        ],
+        cmd,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -62,8 +73,9 @@ def run_scenario(
     )
 
     if result.returncode != 0:
-        raise RuntimeError(f"claude -p failed (rc={result.returncode}): {result.stderr[:500]}")
+        raise RuntimeError(f"llm-cli failed (rc={result.returncode}): {result.stderr[:500]}")
 
+    # copilot --output-format json も claude stream-json と同じ形式のため共通処理
     observations = _parse_stream_json(result.stdout)
 
     return ScenarioRun(
@@ -96,7 +108,7 @@ def _setup_sandbox(sandbox_dir: Path, scenario: Scenario) -> None:
 
 
 def _parse_stream_json(stdout: str) -> list[ObservationEvent]:
-    """claude -p の stream-json 出力を ObservationEvent に変換する。
+    """claude の stream-json 出力を ObservationEvent に変換する。
 
     stream-json の形式:
     - type=assistant かつ content[].type=tool_use → ツール呼び出し（name, input）
@@ -167,3 +179,5 @@ def _parse_stream_json(stdout: str) -> list[ObservationEvent]:
         )
 
     return sorted(events, key=lambda e: e.timestamp)
+
+

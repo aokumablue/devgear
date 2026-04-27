@@ -226,7 +226,7 @@
             "timeout": 30
           }
         ],
-        "description": "編集後の品質ゲートを settings.json の hooks.quality-gate 設定に従って実行します（bundled sample は .py に対する ruff check）"
+        "description": "編集後の品質ゲートを settings.json の hooks.quality-gate 設定に従って実行します"
       }
     ],
     "Stop": [
