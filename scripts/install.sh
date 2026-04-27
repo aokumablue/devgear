@@ -173,6 +173,11 @@ if [[ "${SKIP_PYTHON}" != "1" ]]; then
 
   echo "[devgear] Installing Python package dependencies into ${VENV_DIR}"
   "${VENV_PYTHON}" -m pip install --upgrade pip wheel
+  
+  # torch は CPU-only で十分（CUDA ライブラリなし）
+  echo "[devgear] Installing torch (CPU-only, for sentence-transformers)"
+  "${VENV_PYTHON}" -m pip install 'torch>=2.0' --index-url https://download.pytorch.org/whl/cpu
+  
   "${VENV_PYTHON}" -m pip install -e "${REPO_ROOT}"
   "${VENV_PYTHON}" -m pip install 'psycopg[binary]' 'psycopg-pool'
 
