@@ -179,6 +179,7 @@ bash scripts/pg_setup_native.sh --help  # 全オプション表示
 3. `/c-tdd`
 4. `/c-review`
 5. `/c-clean`
+6. `/c-refactor`
 
 ## 詳細
 
