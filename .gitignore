@@ -17,3 +17,4 @@ tmp/
 Dockerfile.postgres*
 compose.yaml
 compose.*.yaml
+.DS_Store

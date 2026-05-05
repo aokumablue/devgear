@@ -2,12 +2,33 @@
 
 from __future__ import annotations
 
+import sys
 import threading
+
+import torch
 
 from devgear.mem.logger import get as _get_logger
 from devgear.mem.settings import _DEFAULT_EMBEDDING_MODEL
 
 log = _get_logger("EMBEDDING")
+
+# torch 2.2.x は Python 3.12+ で torch.compile (Dynamo) を無効化している。
+# ModernBERT は @torch.compile(dynamic=True) を使うため、起動時に no-op へ差し替える。
+# torch 2.3+ では修正済みなので影響なし。
+def _patch_torch_compile_if_needed() -> None:
+    """torch.compile が Dynamo エラーを投げる環境では no-op に置換する"""
+    if sys.version_info < (3, 12):
+        return
+    try:
+        torch.compile(lambda: None)
+    except RuntimeError:
+        def _noop_compile(fn=None, *args, **kwargs):  # type: ignore[no-untyped-def]
+            return (lambda f: f) if fn is None else fn
+        torch.compile = _noop_compile  # type: ignore[method-assign]
+        log.debug("torch.compile を no-op に置換 (torch %s / Python %d.%d)", torch.__version__, *sys.version_info[:2])
+
+
+_patch_torch_compile_if_needed()
 
 # モデルはセッション終了時のみ使用するため、遅延ロード
 _model = None
