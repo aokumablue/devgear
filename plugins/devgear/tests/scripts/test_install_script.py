@@ -57,6 +57,8 @@ def write_fake_python(path: Path, log_path: Path) -> None:
         '  target="${3:-}"\n'
         '  mkdir -p "${target}/bin"\n'
         '  ln -sf "$0" "${target}/bin/python3"\n'
+        '  ln -sf "$0" "${target}/bin/python3.12"\n'
+        '  ln -sf "$0" "${target}/bin/python3.13"\n'
         "  exit 0\n"
         "fi\n"
         'if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then\n'
@@ -92,6 +94,7 @@ def prepare_temp_repo(tmp_path: Path) -> Path:
     shutil.copy2(ROOT / "plugins" / "devgear" / "install.sh", plugin_dir / "install.sh")
     shutil.copy2(ROOT / "plugins" / "devgear" / "install-dev.sh", plugin_dir / "install-dev.sh")
     shutil.copy2(ROOT / "plugins" / "devgear" / "settings.json", plugin_dir / "settings.json")
+    shutil.copy2(ROOT / "plugins" / "devgear" / "pyproject.toml", plugin_dir / "pyproject.toml")
     return repo
 
 
@@ -191,6 +194,8 @@ def test_install_dev_script_runs_user_and_dev_steps(tmp_path: Path) -> None:
     log_path = tmp_path / "python.log"
 
     write_fake_python(bin_dir / "python3", log_path)
+    write_fake_python(bin_dir / "python3.12", log_path)
+    write_fake_python(bin_dir / "python3.13", log_path)
 
     result = run_script(
         repo / "plugins" / "devgear" / "install-dev.sh",

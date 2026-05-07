@@ -119,6 +119,11 @@ class Settings:
         return self.data_path / _SYNC_STATE_FILENAME
 
     @property
+    def sync_lock_path(self) -> Path:
+        """sync.lock の絶対パスを返す。"""
+        return self.data_path / "sync.lock"
+
+    @property
     def db_path(self) -> Path:
         """mem.db の絶対パスを返す。"""
         return self.data_path / "mem.db"
@@ -163,7 +168,9 @@ class Settings:
             "last_sync_success": self.sync.last_sync_success,
             "last_compacted_at": self.last_compacted_at,
         }
-        self.sync_state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp_path = self.sync_state_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp_path.replace(self.sync_state_path)
 
     @classmethod
     def load(cls, settings_path: Path | None = None) -> Settings:
@@ -222,6 +229,10 @@ class Settings:
         """既定データディレクトリの sync_state.json をベストエフォートで読み込む。"""
         if self.sync_state_path.exists():
             self._load_sync_state_from(self.sync_state_path)
+
+    def reload_sync_state(self) -> None:
+        """sync_state.json を再読込する。"""
+        self._load_sync_state()
 
     def _load_sync_state_from(self, path: Path) -> None:
         """指定パスの sync_state.json を読み込んで self に反映する。"""

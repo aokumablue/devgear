@@ -61,7 +61,7 @@ Execute this task:
 
 この情報はその通知でしか取れない。後でまとめて処理しようとせず、届いたらすぐ保存。
 
-## 4. gradingして集計し、viewerを開く
+## 4. gradingして集計し、分析する
 
 すべてのrunが終わったら:
 
@@ -80,59 +80,10 @@ PYTHONPATH=src python -m devgear.skills.aggregate_benchmark <workspace>/iteratio
 これで `benchmark.json` と `benchmark.md` が作られる。各構成の通過率・時間・トークン数が平均±標準偏差と差分付きでまとまる。手で `benchmark.json` を作る場合は `references/schemas.md` のビューアー用スキーマを参照。`with_skill` を `without_skill` の前に並べる。
 
 3. **分析を入れる**
-   - benchmarkデータを読み、集計だけでは見えないパターンを拾う
+   - `benchmark.json` と各 `grading.json` を直接読んで分析する
    - `../../agents/a-analyzer.md` の「ベンチマーク結果の分析」セクションを参照
    - 例: 常に通るだけで差が出ないassertions・ばらつきが大きいeval・時間/トークンのトレードオフ
 
-4. **viewerを開く**
+## 5. 分析結果をもとに改善する
 
-```bash
-source "${CLAUDE_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
-VIEWER_PID="$(devgear_run_bg devgear.skills.eval_viewer.generate_review <workspace>/iteration-N --skill-name 'my-skill' --benchmark <workspace>/iteration-N/benchmark.json)"
-```
-
-イテレーション2以降は `--previous-workspace <workspace>/iteration-<N-1>` も渡す。
-
-**Cowork/headless環境**: `webbrowser.open()` が使えない/画面がない場合は `--static <output_path>` でスタンドアロンHTMLを書き出す。ユーザーが「レビューをすべて送信」を押すと `feedback.json` がダウンロードされる→次のイテレーションのためにワークスペースへコピー。
-
-`generate_review.py` を使ってviewerを作る。自前でHTMLを書く必要はない。
-
-5. **ユーザーに伝える**
-
-## viewerでユーザーが見るもの
-
-`出力` タブでは1つのテストケースを1つずつ表示:
-
-- **プロンプト**: 与えたタスク
-- **出力**: スキルが生成したファイル。可能なものはその場で表示
-- **前回の出力**（イテレーション2以降）: 前回の出力を折りたたみで表示
-- **評価**（採点した場合）: アサーションの合否を折りたたみで表示
-- **フィードバック**: 入力すると自動保存されるテキストボックス
-- **前回のフィードバック**（イテレーション2以降）: 前回のコメントをテキストボックスの下に表示
-
-`ベンチマーク` タブでは、各構成の通過率・時間・トークン使用量・evalごとの内訳・分析メモが見られる。
-
-移動は前へ/次へボタンか矢印キー。終わったら `レビューをすべて送信` を押すと全フィードバックが `feedback.json` に保存される。
-
-## 5. フィードバックを読む
-
-ユーザーが終わったと言ったら、`feedback.json` を読む。
-
-```json
-{
-  "reviews": [
-    {"run_id": "eval-0-with_skill", "feedback": "the chart is missing axis labels", "timestamp": "..."},
-    {"run_id": "eval-1-with_skill", "feedback": "", "timestamp": "..."},
-    {"run_id": "eval-2-with_skill", "feedback": "perfect, love this", "timestamp": "..."}
-  ],
-  "status": "complete"
-}
-```
-
-空のfeedbackは「問題なかった」の意味。改善は具体的な不満が出たテストケースを優先。
-
-使い終わったviewerサーバーは止める。
-
-```bash
-kill $VIEWER_PID 2>/dev/null
-```
+`grading.json` の `evidence` フィールドと `benchmark.json` の統計から改善点を抽出し、次のイテレーションに反映する。改善は具体的な失敗が出たテストケースを優先。

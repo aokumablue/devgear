@@ -32,9 +32,8 @@
 
 1. 変更をスキルに反映
 2. すべてのテストケースを新しい `iteration-<N+1>/` に再実行（ベースラインも含む）
-3. `--previous-workspace` を前回イテレーションに向けてレビュー担当を起動
-4. ユーザーがレビューし終わるのを待つ
-5. 新しいフィードバックを読み、さらに改善して繰り返す
+3. `benchmark.json` / `grading.json` を読んで結果を分析する
+4. 新たな改善点を抽出してさらに改善して繰り返す
 
 続ける条件:
 
@@ -105,7 +104,6 @@ devgear_run devgear.skills.package_skill <path/to/skill-folder>
 ### Claude.ai
 
 - subagentがないので並列実行はせず1件ずつ進める
-- ブラウザreviewerが使えない場合→会話中で結果を直接見せる
 - baseline比較に依存する定量ベンチマークは省略し、定性的フィードバックを重視
 - 説明文最適化（eval スクリプト使用）は飛ばす
 - 盲検比較は飛ばす
@@ -114,7 +112,4 @@ devgear_run devgear.skills.package_skill <path/to/skill-folder>
 ### Cowork
 
 - subagentは使えるので基本フローはそのまま
-- viewerは `--static <output_path>` でスタンドアロンHTMLを出力
-- `レビューをすべて送信` は `feedback.json` をファイルとしてダウンロード
-- **必ずテストの前にviewerを作る**（`generate_review.py` を使い、自作HTMLは書かない）
 - 既存スキル更新時はClaude.aiのセクションの手順に従う

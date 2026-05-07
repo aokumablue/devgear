@@ -53,7 +53,7 @@ PLATFORM="$(detect_platform)"
 
 # Python 3.12+ のバイナリを探す
 find_python3() {
-  for candidate in python3.13 python3.12 python3; do
+  for candidate in python3.14 python3.13 python3.12 python3; do
     if command -v "${candidate}" >/dev/null 2>&1; then
       local ver
       ver="$("${candidate}" -c 'import sys; print(sys.version_info.major * 100 + sys.version_info.minor)' 2>/dev/null || echo 0)"
@@ -191,21 +191,21 @@ install_user_python() {
   "${VENV_PYTHON}" -m pip install --upgrade pip wheel
 
   # プラットフォム別 torch インストール
-  # macOS: PyPI から取得（最新は 2.2.2 / Intel Mac）、numpy<2 で ABI 互換性確保
+  # macOS: PyPI から取得（最新は 2.2.2 / Intel Mac）
   # Linux: CPU-only インデックスから取得
   if [[ "${PLATFORM}" == "macos" ]]; then
     echo "[devgear] Installing torch for macOS"
-    "${VENV_PYTHON}" -m pip install 'torch>=2.0,<3.0' 'numpy<2'
+    "${VENV_PYTHON}" -m pip install 'torch>=2.0,<3.0' 'numpy>=2.0'
   else
     echo "[devgear] Installing torch for Linux (CPU-only)"
-    "${VENV_PYTHON}" -m pip install 'torch>=2.0,<3.0' 'numpy<2' --index-url https://download.pytorch.org/whl/cpu
+    "${VENV_PYTHON}" -m pip install 'torch>=2.0,<3.0' 'numpy>=2.0' --index-url https://download.pytorch.org/whl/cpu
   fi
 
   # sentence-transformers 3.x + transformers 4.41+ は macOS Intel / Ubuntu 共に対応
   # 3.x は torch>=1.11.0 で動き、ModernBERT（ruri-v3-310m）をサポートする
   "${VENV_PYTHON}" -m pip install \
-    'sentence-transformers>=3.0,<4.0' \
-    'transformers>=4.41,<5.0'
+    'sentence-transformers>=3.0,<6.0' \
+    'transformers>=4.41,<6.0'
 
   # --no-deps: pyproject.toml の依存解決をスキップして上で固定したバージョンを維持する
   "${VENV_PYTHON}" -m pip install --no-deps -e "${REPO_ROOT}"

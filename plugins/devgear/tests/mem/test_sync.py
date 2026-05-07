@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import fcntl
+import json
 import sqlite3
 import struct
 from types import SimpleNamespace
@@ -28,12 +30,15 @@ def mock_settings(tmp_path):
     """テスト用の設定オブジェクト"""
     settings = MagicMock()
     settings.db_path = str(tmp_path / "sync.db")
+    settings.sync_lock_path = tmp_path / "sync.lock"
+    settings.sync_state_path = tmp_path / "sync_state.json"
     settings.sync.enabled = True
     settings.sync.postgres_url = "postgresql://testuser@localhost:5432/testdb"
     settings.sync.interval_hours = 168  # 7日 = 168時間
     settings.sync.last_synced_at = 0.0
     settings.sync.last_sync_attempt_at = 0.0
     settings.sync.last_sync_success = False
+    settings.reload_sync_state = lambda: None
     return settings
 
 
@@ -155,6 +160,113 @@ class TestSyncCheck:
         mock_settings.sync.enabled = False
         result = sync_check(mock_settings)
         assert result.success is True
+
+
+class TestSyncLocking:
+    """ファイルロックによる同期制御のテスト"""
+
+    def test_skips_when_another_sync_holds_lock(self, mock_settings, monkeypatch, mock_git_user):
+        class FailingDatabase:
+            def __init__(self, path):  # noqa: ANN001
+                raise AssertionError("Database should not be opened when lock is held")
+
+        class FailingPgDatabase:
+            def __init__(self, url):  # noqa: ANN001
+                raise AssertionError("PgDatabase should not be opened when lock is held")
+
+        monkeypatch.setattr("devgear.mem.sync.Database", FailingDatabase)
+        monkeypatch.setattr("devgear.mem.sync.PgDatabase", FailingPgDatabase)
+
+        with mock_settings.sync_lock_path.open("a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = sync_to_postgres(mock_settings)
+
+        assert result.success is True
+        assert result.chunks == 0
+
+    def test_lock_release_allows_sync_to_proceed(self, mock_settings, monkeypatch, mock_git_user):
+        db = Database(mock_settings.db_path)
+
+        class FakeSQLiteDb:
+            def __init__(self, real_db: Database) -> None:
+                self.conn = real_db.conn
+                self._real_db = real_db
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+                self._real_db.close()
+
+        class FakePgDb:
+            def __init__(self) -> None:
+                self.closed = False
+                self.tested = False
+
+            def test_connection(self) -> bool:
+                self.tested = True
+                return True
+
+            def close(self) -> None:
+                self.closed = True
+
+        sqlite_db = FakeSQLiteDb(db)
+        pg_db = FakePgDb()
+        monkeypatch.setattr("devgear.mem.sync.Database", lambda path: sqlite_db)
+        monkeypatch.setattr("devgear.mem.sync.PgDatabase", lambda url: pg_db)
+
+        with mock_settings.sync_lock_path.open("a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+        result = sync_to_postgres(mock_settings)
+
+        assert result.success is True
+        assert pg_db.tested is True
+        assert sqlite_db.closed is True
+        assert pg_db.closed is True
+
+    def test_reloads_state_and_skips_duplicate_sync(self, mock_settings, monkeypatch):
+        import time
+
+        now = time.time()
+        mock_settings.sync.last_synced_at = 0.0
+        mock_settings.sync.last_sync_attempt_at = 0.0
+        mock_settings.sync.last_sync_success = True
+
+        mock_settings.sync_state_path.write_text(
+            json.dumps(
+                {
+                    "last_synced_at": now,
+                    "last_sync_attempt_at": now,
+                    "last_sync_success": True,
+                    "last_compacted_at": 0.0,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def reload_sync_state() -> None:
+            raw = json.loads(mock_settings.sync_state_path.read_text(encoding="utf-8"))
+            mock_settings.sync.last_synced_at = raw["last_synced_at"]
+            mock_settings.sync.last_sync_attempt_at = raw["last_sync_attempt_at"]
+            mock_settings.sync.last_sync_success = raw["last_sync_success"]
+
+        mock_settings.reload_sync_state = reload_sync_state
+
+        monkeypatch.setattr(
+            "devgear.mem.sync.Database",
+            lambda path: (_ for _ in ()).throw(AssertionError("Database should not be opened")),
+        )
+        monkeypatch.setattr(
+            "devgear.mem.sync.PgDatabase",
+            lambda url: (_ for _ in ()).throw(AssertionError("PgDatabase should not be opened")),
+        )
+
+        result = sync_to_postgres(mock_settings)
+
+        assert result.success is True
+        assert result.chunks == 0
+        assert mock_settings.save_sync_state.called is False
 
 
 class TestSyncResult:
@@ -436,7 +548,7 @@ class TestSyncToPostgresDetailed:
         monkeypatch.setattr("devgear.mem.sync.Database", lambda path: sqlite_db)
         monkeypatch.setattr("devgear.mem.sync.PgDatabase", lambda url: pg_db)
         monkeypatch.setattr("devgear.mem.sync._sync_embeddings", lambda sqlite_db, pg_db, chunks: len(chunks))
-        monkeypatch.setattr("devgear.mem.sync.time.time", lambda: 9999)
+        monkeypatch.setattr("devgear.mem.sync.time.time", lambda: 10_000_000_000)
 
         result = sync_to_postgres(mock_settings, dry_run=False)
 
@@ -452,7 +564,7 @@ class TestSyncToPostgresDetailed:
         assert result.embeddings == 1
         assert sqlite_db.closed is True
         assert pg_db.closed is True
-        assert mock_settings.sync.last_synced_at == 9999
+        assert mock_settings.sync.last_synced_at == 10_000_000_000
         assert mock_settings.save_sync_state.called
         assert pg_db.calls[0] == ("chunks", ("test_user", 1))
         assert pg_db.calls[1] == ("sessions", ("test_user", 1))

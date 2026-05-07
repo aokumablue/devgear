@@ -17,8 +17,6 @@ log = _get_logger("EMBEDDING")
 # torch 2.3+ では修正済みなので影響なし。
 def _patch_torch_compile_if_needed() -> None:
     """torch.compile が Dynamo エラーを投げる環境では no-op に置換する"""
-    if sys.version_info < (3, 12):
-        return
     try:
         torch.compile(lambda: None)
     except RuntimeError:

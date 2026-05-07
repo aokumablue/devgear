@@ -163,3 +163,20 @@ def test_validate_hooks_reports_invalid_matcher_and_entrypoint(
         runpy.run_module("devgear.ci.validate_hooks", run_name="__main__")
 
     assert excinfo.value.code == 0
+
+
+def test_repo_sync_check_hook_runs_synchronously() -> None:
+    repo_root = Path(__file__).resolve().parents[4]
+    hooks_file = repo_root / "plugins/devgear/hooks/hooks.json"
+    hooks = json.loads(hooks_file.read_text(encoding="utf-8"))
+    user_prompt_hooks = hooks["hooks"]["UserPromptSubmit"]
+
+    sync_check_entry = next(
+        hook
+        for matcher in user_prompt_hooks
+        for hook in matcher["hooks"]
+        if "devgear.mem.cli sync-check" in hook.get("command", "")
+    )
+
+    assert sync_check_entry["async"] is True
+    assert sync_check_entry["timeout"] == 600
