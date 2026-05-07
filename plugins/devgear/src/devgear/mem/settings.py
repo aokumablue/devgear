@@ -45,7 +45,7 @@ class SyncSettings:
     enabled: bool = False
     postgres_url: str = ""
     # --- 以下はランタイム状態（sync_state.json で管理、settings.json に書かない） ---
-    interval_hours: int = 24
+    interval_hours: int = 3
     last_synced_at: float = 0.0
     last_sync_attempt_at: float = 0.0
     last_sync_success: bool = False

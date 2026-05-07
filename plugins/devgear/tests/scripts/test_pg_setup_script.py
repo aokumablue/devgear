@@ -234,7 +234,7 @@ def test_docker17_mode_creates_env_file_with_random_password(tmp_path: Path) -> 
 
     assert settings_path.read_text(encoding="utf-8") == original_settings
     assert "Edit the mem.sync section" in result.stdout
-    assert '"interval_hours": 24' in result.stdout
+    assert '"interval_hours": 3' in result.stdout
     assert '"origin_user": "alice"' in result.stdout
     assert "Run: python3 -m devgear.mem sync" in result.stdout
 

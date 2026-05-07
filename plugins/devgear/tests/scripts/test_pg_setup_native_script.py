@@ -277,3 +277,33 @@ def test_superuser_password_is_reused_from_env(tmp_path: Path) -> None:
     seen_passwords = [line.strip() for line in pw_log.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(seen_passwords) >= 3
     assert all(password == "secret-pass" for password in seen_passwords)
+
+
+def test_next_steps_prints_three_hour_sync_interval(tmp_path: Path) -> None:
+    """next steps に interval_hours=3 が表示されること。"""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    write_exec(
+        bin_dir / "openssl",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf '%s\\n' 'deadbeefdeadbeefdeadbeefdeadbeef'\n",
+    )
+    write_exec(
+        bin_dir / "psql",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "exit 0\n",
+    )
+
+    result = run_script(
+        ["--no-install-pgvector", "--skip-schema"],
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "PG_SETUP_DISTRO": "macos",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '"interval_hours": 3' in result.stdout

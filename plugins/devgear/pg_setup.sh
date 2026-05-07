@@ -176,7 +176,7 @@ print_sync_settings_example() {
   echo '     "mem": {'
   echo '       "sync": {'
   echo '         "enabled": true,'
-  echo '         "interval_hours": 24,'
+  echo '         "interval_hours": 3,'
   echo '         "postgres_url": "<postgres_url>",'
   printf '         "origin_user": "%s"\n' "${origin_user}"
   echo '       }'

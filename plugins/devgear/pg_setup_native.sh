@@ -614,7 +614,7 @@ print_connection_info() {
   printf '     "mem": {\n'
   printf '       "sync": {\n'
   printf '         "enabled": true,\n'
-  printf '         "interval_hours": 24,\n'
+  printf '         "interval_hours": 3,\n'
   printf '         "postgres_url": "%s",\n' "${connection_url_full}"
   printf '         "origin_user": "%s"\n' "${origin_user}"
   printf '       }\n'
