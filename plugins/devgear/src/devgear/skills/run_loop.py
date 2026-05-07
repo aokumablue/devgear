@@ -9,12 +9,9 @@ import argparse
 import json
 import random
 import sys
-import tempfile
 import time
-import webbrowser
 from pathlib import Path
 
-from .generate_report import generate_html
 from .improve_description import improve_description
 from .run_eval import find_project_root, run_eval
 from .utils import parse_skill_md
@@ -55,7 +52,6 @@ def run_loop(
     holdout: float,
     model: str,
     verbose: bool,
-    live_report_path: Path | None = None,
     log_dir: Path | None = None,
 ) -> dict:
     """eval + 改善ループを実行する。"""
@@ -131,20 +127,6 @@ def run_loop(
                 "test_results": test_results["results"] if test_results else None,
             }
         )
-
-        # パスがあればライブレポートを書き出す
-        if live_report_path:
-            partial_output = {
-                "original_description": original_description,
-                "best_description": current_description,
-                "best_score": "in progress",
-                "iterations_run": len(history),
-                "holdout": holdout,
-                "train_size": len(train_set),
-                "test_size": len(test_set),
-                "history": history,
-            }
-            live_report_path.write_text(generate_html(partial_output, auto_refresh=True, skill_name=name))
 
         if verbose:
 
@@ -255,14 +237,9 @@ def main():
     parser.add_argument("--model", required=True, help="改善に使うモデル")
     parser.add_argument("--verbose", action="store_true", help="進捗を stderr に表示する")
     parser.add_argument(
-        "--report",
-        default="auto",
-        help="このパスに HTML レポートを生成する（既定: 'auto' で一時ファイル、'none' で無効）",
-    )
-    parser.add_argument(
         "--results-dir",
         default=None,
-        help="結果（results.json / report.html / log.txt）をこの日時付きサブディレクトリに保存する",
+        help="結果（results.json / log.txt）をこの日時付きサブディレクトリに保存する",
     )
     args = parser.parse_args()
 
@@ -272,25 +249,6 @@ def main():
     if not (skill_path / "SKILL.md").exists():
         print(f"Error: No SKILL.md found at {skill_path}", file=sys.stderr)
         sys.exit(1)
-
-    name, _, _ = parse_skill_md(skill_path)
-
-    # Set up live report path
-    if args.report != "none":
-        if args.report == "auto":
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            live_report_path = (
-                Path(tempfile.gettempdir()) / f"skill_description_report_{skill_path.name}_{timestamp}.html"
-            )
-        else:
-            live_report_path = Path(args.report)
-        # すぐにレポートを開き、ユーザーが追えるようにする
-        live_report_path.write_text(
-            "<html><body><h1>最適化ループを開始しています...</h1><meta http-equiv='refresh' content='5'></body></html>"
-        )
-        webbrowser.open(str(live_report_path))
-    else:
-        live_report_path = None
 
     # 出力先ディレクトリを決める（run_loop 前に作成してログを書けるようにする）
     if args.results_dir:
@@ -314,7 +272,6 @@ def main():
         holdout=args.holdout,
         model=args.model,
         verbose=args.verbose,
-        live_report_path=live_report_path,
         log_dir=log_dir,
     )
 
@@ -323,16 +280,6 @@ def main():
     print(json_output)
     if results_dir:
         (results_dir / "results.json").write_text(json_output)
-
-    # 最終 HTML レポートを書き出す（自動更新なし）
-    if live_report_path:
-        live_report_path.write_text(generate_html(output, auto_refresh=False, skill_name=name))
-        print(f"\nレポート: {live_report_path}", file=sys.stderr)
-
-    if results_dir and live_report_path:
-        (results_dir / "report.html").write_text(generate_html(output, auto_refresh=False, skill_name=name))
-
-    if results_dir:
         print(f"結果を保存しました: {results_dir}", file=sys.stderr)
 
 

@@ -67,17 +67,7 @@ SKILL.mdの前置きにある `description` は、Claudeがスキルを呼ぶか
 **should-trigger**（8〜10件）: 同じ意図の別表現を広く集める。
 **should-not-trigger**（8〜10件）: 近接しつつも別タスクが必要なものを選ぶ。
 
-### 2. ユーザーにレビューしてもらう
-
-HTMLテンプレートでevalセットを見せる:
-
-1. `assets/eval_review.html` を読む
-2. プレースホルダを置換
-3. 一時ファイルに書き出して開く
-4. ユーザーがクエリを編集し、`Export Eval Set` を押す
-5. ダウンロードされた `eval_set.json` を確認
-
-### 3. 最適化ループを回す
+### 2. 最適化ループを回す
 
 ```bash
 source "${CLAUDE_PLUGIN_ROOT}/runtime/devgear-helpers.sh"
@@ -86,7 +76,7 @@ devgear_run devgear.skills.run_loop --eval-set <path-to-trigger-eval.json> --ski
 
 現セッションを動かしているmodel IDを使う。evalセットをtrain 60% / holdout test 40%に分け、反復改善。`best_description` はtestスコアで選ぶ。
 
-### 4. 結果を反映する
+### 3. 結果を反映する
 
 JSONの `best_description` を取り出し、SKILL.mdのfrontmatterを更新。
 

@@ -453,11 +453,10 @@ def test_run_loop_all_passed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert run_calls == []
 
 
-def test_run_loop_hits_max_iterations_with_live_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_loop_hits_max_iterations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     skill_path = tmp_path / "skill"
     skill_path.mkdir()
     (skill_path / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
-    live_report_path = tmp_path / "live.html"
     run_count = {"value": 0}
     train_set = [{"query": "train", "should_trigger": True}]
     test_set = [{"query": "test", "should_trigger": False}]
@@ -465,7 +464,6 @@ def test_run_loop_hits_max_iterations_with_live_report(tmp_path: Path, monkeypat
     monkeypatch.setattr(run_loop, "find_project_root", lambda: tmp_path)
     monkeypatch.setattr(run_loop, "parse_skill_md", lambda path: ("alpha", "orig desc", "content"))
     monkeypatch.setattr(run_loop, "split_eval_set", lambda eval_set, holdout, seed=42: (train_set, test_set))
-    monkeypatch.setattr(run_loop, "generate_html", lambda output, auto_refresh, skill_name: "<html>")
 
     def fake_run_eval(**kwargs):  # noqa: ANN001
         run_count["value"] += 1
@@ -531,19 +529,16 @@ def test_run_loop_hits_max_iterations_with_live_report(tmp_path: Path, monkeypat
         holdout=0.5,
         model="sonnet",
         verbose=False,
-        live_report_path=live_report_path,
         log_dir=tmp_path / "logs",
     )
 
     assert result["exit_reason"] == "max_iterations (1)"
-    assert live_report_path.read_text() == "<html>"
 
 
 def test_run_loop_improves_description_and_chooses_best_test_score(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     skill_path = tmp_path / "skill"
     skill_path.mkdir()
     (skill_path / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
-    live_report_path = tmp_path / "live.html"
     train_set = [{"query": "train", "should_trigger": True}]
     test_set = [{"query": "test", "should_trigger": False}]
     run_count = {"value": 0}
@@ -552,7 +547,6 @@ def test_run_loop_improves_description_and_chooses_best_test_score(tmp_path: Pat
     monkeypatch.setattr(run_loop, "find_project_root", lambda: tmp_path)
     monkeypatch.setattr(run_loop, "parse_skill_md", lambda path: ("alpha", "orig desc", "content"))
     monkeypatch.setattr(run_loop, "split_eval_set", lambda eval_set, holdout, seed=42: (train_set, test_set))
-    monkeypatch.setattr(run_loop, "generate_html", lambda output, auto_refresh, skill_name: "<html>")
 
     def fake_run_eval(**kwargs):  # noqa: ANN001
         run_count["value"] += 1
@@ -622,14 +616,12 @@ def test_run_loop_improves_description_and_chooses_best_test_score(tmp_path: Pat
         holdout=0.5,
         model="sonnet",
         verbose=False,
-        live_report_path=live_report_path,
         log_dir=tmp_path / "logs",
     )
 
     assert result["exit_reason"] == "all_passed (iteration 2)"
     assert result["best_description"] == "improved desc"
     assert improved == ["orig desc"]
-    assert live_report_path.read_text() == "<html>"
 
 
 def test_run_loop_main_exits_when_skill_md_missing(
@@ -660,7 +652,7 @@ def test_run_loop_main_exits_when_skill_md_missing(
     assert "SKILL.md" in capsys.readouterr().err
 
 
-def test_run_loop_main_writes_results_and_report(
+def test_run_loop_main_writes_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     eval_file = tmp_path / "eval.json"
@@ -669,8 +661,6 @@ def test_run_loop_main_writes_results_and_report(
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
     results_dir = tmp_path / "results"
-    monkeypatch.setattr(run_loop, "parse_skill_md", lambda path: ("alpha", "orig desc", "content"))
-    monkeypatch.setattr(run_loop, "generate_html", lambda output, auto_refresh, skill_name: "<html>")
     monkeypatch.setattr(
         run_loop,
         "run_loop",
@@ -701,8 +691,6 @@ def test_run_loop_main_writes_results_and_report(
             str(skill_dir),
             "--model",
             "sonnet",
-            "--report",
-            "none",
             "--results-dir",
             str(results_dir),
         ],
@@ -780,69 +768,6 @@ def test_run_loop_verbose_prints_train_and_test_stats(
     assert "検証用:" in err
     assert "Max iterations reached" in err
 
-
-def test_run_loop_main_auto_report_and_results_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    eval_file = tmp_path / "eval.json"
-    eval_file.write_text(json.dumps([{"query": "q1", "should_trigger": True}]), encoding="utf-8")
-    skill_dir = tmp_path / "skill"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
-    results_dir = tmp_path / "results"
-    report_calls: list[str] = []
-
-    monkeypatch.setattr(run_loop, "parse_skill_md", lambda path: ("alpha", "orig desc", "content"))
-    monkeypatch.setattr(run_loop, "generate_html", lambda output, auto_refresh, skill_name: "<html>")
-    monkeypatch.setattr(
-        run_loop,
-        "run_loop",
-        lambda **kwargs: {
-            "exit_reason": "all_passed (iteration 1)",
-            "original_description": "orig desc",
-            "best_description": "desc",
-            "best_score": "1/1",
-            "best_train_score": "1/1",
-            "best_test_score": None,
-            "final_description": "desc",
-            "iterations_run": 1,
-            "holdout": 0.0,
-            "train_size": 1,
-            "test_size": 0,
-            "history": [],
-        },
-    )
-    monkeypatch.setattr(run_loop.time, "strftime", lambda fmt: "2026-01-01_000000")
-    monkeypatch.setattr(run_loop.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.setattr(run_loop.webbrowser, "open", lambda url: report_calls.append(url) or True)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "run_loop.py",
-            "--eval-set",
-            str(eval_file),
-            "--skill-path",
-            str(skill_dir),
-            "--model",
-            "sonnet",
-            "--report",
-            "auto",
-            "--results-dir",
-            str(results_dir),
-        ],
-    )
-
-    run_loop.main()
-
-    captured = capsys.readouterr()
-    expected_report = tmp_path / "skill_description_report_skill_2026-01-01_000000.html"
-    assert report_calls == [str(expected_report)]
-    assert expected_report.exists()
-    assert (results_dir / "2026-01-01_000000" / "results.json").exists()
-    assert (results_dir / "2026-01-01_000000" / "report.html").exists()
-    assert "レポート:" in captured.err
-    assert "結果を保存しました" in captured.err
 
 
 def test_run_single_query_covers_blank_lines_stop_and_skill_fallback(
@@ -1023,57 +948,8 @@ def test_run_loop_verbose_improvement_and_all_passed(
     assert "All train queries passed on iteration 2!" in err
 
 
-def test_run_loop_main_custom_report_and_entrypoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """main の custom report と __main__ entrypoint を通す。"""
-    eval_file = tmp_path / "eval.json"
-    eval_file.write_text(json.dumps([{"query": "q1", "should_trigger": True}]), encoding="utf-8")
-    skill_dir = tmp_path / "skill"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
-    report_path = tmp_path / "report.html"
-
-    monkeypatch.setattr(run_loop, "parse_skill_md", lambda path: ("alpha", "orig desc", "content"))
-    monkeypatch.setattr(run_loop, "generate_html", lambda output, auto_refresh, skill_name: "<html>")
-    monkeypatch.setattr(
-        run_loop,
-        "run_loop",
-        lambda **kwargs: {
-            "exit_reason": "all_passed (iteration 1)",
-            "original_description": "orig desc",
-            "best_description": "desc",
-            "best_score": "1/1",
-            "best_train_score": "1/1",
-            "best_test_score": None,
-            "final_description": "desc",
-            "iterations_run": 1,
-            "holdout": 0.0,
-            "train_size": 1,
-            "test_size": 0,
-            "history": [],
-        },
-    )
-    monkeypatch.setattr(run_loop.webbrowser, "open", lambda url: True)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "run_loop.py",
-            "--eval-set",
-            str(eval_file),
-            "--skill-path",
-            str(skill_dir),
-            "--model",
-            "sonnet",
-            "--report",
-            str(report_path),
-        ],
-    )
-
-    run_loop.main()
-    assert report_path.exists()
-
+def test_run_loop_main_entrypoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """__main__ entrypoint を通す。"""
     monkeypatch.setattr(sys, "argv", ["run_loop.py", "--help"])
     with pytest.raises(SystemExit) as excinfo:
         runpy.run_module("devgear.skills.run_loop", run_name="__main__")
