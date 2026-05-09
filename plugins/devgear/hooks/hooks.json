@@ -84,6 +84,17 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.session_install",
+            "timeout": 1800
+          }
+        ],
+        "description": "プラグインバージョンが変わった場合のみ install.sh を実行して仮想環境を再構築する"
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.mem.cli setup",
             "timeout": 120
           }
