@@ -735,3 +735,238 @@ class TestSessionStartRubyLog:
         output = session_start.run("{}")
         assert any("Ruby project detected" in msg for msg in logs), f"Expected Ruby log in: {logs}"
         assert "ruby" in output
+
+
+class TestCheckpointInjection:
+    """session_start がアクティブなチェックポイントを注入するテスト。"""
+
+    def _make_session_start_base_patches(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """session_start.run() の共通モックを設定する。"""
+        from devgear.hooks import session_start
+        from devgear.lib.package_manager import PackageManagerResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(session_start, "log", lambda _: None)
+        monkeypatch.setattr(session_start, "get_package_manager", lambda: PackageManagerResult(name=None, config=None, source="none"))
+        monkeypatch.setattr(session_start, "ensure_dir", lambda _: None)
+        monkeypatch.setattr(session_start, "_save_project_profile", lambda _: None)
+        monkeypatch.setattr(session_start, "_import_adrs_and_instincts", lambda: None)
+        monkeypatch.setattr(session_start, "extract_coverage_hint_lines", lambda _: None)
+
+    def test_active_checkpoint_is_injected(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """completed: false のチェックポイントが additionalContext に注入されること。"""
+        from devgear.hooks import session_start
+
+        sessions_dir = tmp_path / "session-data"
+        sessions_dir.mkdir()
+        checkpoint = sessions_dir / "checkpoint-2026-05-09-test.md"
+        checkpoint.write_text(
+            "---\ntask: test\ncompleted: false\n---\n\n## 目標\nテスト中\n",
+            encoding="utf-8",
+        )
+
+        self._make_session_start_base_patches(monkeypatch, tmp_path)
+        monkeypatch.setattr(session_start, "get_sessions_dir", lambda: sessions_dir)
+        monkeypatch.setattr(session_start, "get_session_search_dirs", lambda: [sessions_dir])
+        monkeypatch.setattr(session_start, "get_learned_skills_dir", lambda: tmp_path / "learned")
+        monkeypatch.setattr(session_start, "find_files", lambda path, pattern, **kw: (
+            [{"path": str(checkpoint), "mtime": 9999}] if "checkpoint-" in pattern else []
+        ))
+        monkeypatch.setattr(session_start, "read_file", lambda p: checkpoint.read_text(encoding="utf-8") if str(p) == str(checkpoint) else "")
+
+        output = session_start.run("{}")
+        payload = json.loads(output)
+        context = payload["hookSpecificOutput"]["additionalContext"]
+        assert "Active checkpoint:" in context
+
+    def test_completed_checkpoint_is_not_injected(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """completed: true のチェックポイントは注入されないこと。"""
+        from devgear.hooks import session_start
+
+        sessions_dir = tmp_path / "session-data"
+        sessions_dir.mkdir()
+        checkpoint = sessions_dir / "checkpoint-2026-05-09-done.md"
+        checkpoint.write_text(
+            "---\ntask: done\ncompleted: true\n---\n\n## 目標\n完了済み\n",
+            encoding="utf-8",
+        )
+
+        self._make_session_start_base_patches(monkeypatch, tmp_path)
+        monkeypatch.setattr(session_start, "get_sessions_dir", lambda: sessions_dir)
+        monkeypatch.setattr(session_start, "get_session_search_dirs", lambda: [sessions_dir])
+        monkeypatch.setattr(session_start, "get_learned_skills_dir", lambda: tmp_path / "learned")
+        monkeypatch.setattr(session_start, "find_files", lambda path, pattern, **kw: (
+            [{"path": str(checkpoint), "mtime": 9999}] if "checkpoint-" in pattern else []
+        ))
+        monkeypatch.setattr(session_start, "read_file", lambda p: checkpoint.read_text(encoding="utf-8") if str(p) == str(checkpoint) else "")
+
+        output = session_start.run("{}")
+        payload = json.loads(output)
+        context = payload["hookSpecificOutput"]["additionalContext"]
+        assert "Active checkpoint:" not in context
+
+
+class TestAutoCheckpointSave:
+    """session_end がメッセージ閾値超過時にチェックポイントを自動保存するテスト。"""
+
+    def _make_summary(self, total_messages: int = 35) -> dict:
+        """テスト用サマリーを生成する。"""
+        return {
+            "userMessages": [f"msg{i}" for i in range(min(total_messages, 10))],
+            "toolsUsed": ["Edit", "Read"],
+            "filesModified": ["path/to/file.py"],
+            "totalMessages": total_messages,
+        }
+
+    def test_auto_checkpoint_created_when_threshold_exceeded(self, tmp_path: Path) -> None:
+        """メッセージ数が閾値以上のとき新規チェックポイントが作成されること。"""
+        sessions_dir = tmp_path / "session-data"
+        sessions_dir.mkdir()
+        metadata = {"project": "devgear", "branch": "develop", "worktree": str(tmp_path)}
+        summary = self._make_summary(35)
+
+        session_end._auto_save_checkpoint(summary, metadata, sessions_dir)
+
+        checkpoints = list(sessions_dir.glob("checkpoint-*.md"))
+        assert len(checkpoints) == 1
+        content = checkpoints[0].read_text(encoding="utf-8")
+        assert "completed: false" in content
+        assert "path/to/file.py" in content
+
+    def test_auto_checkpoint_updates_existing(self, tmp_path: Path) -> None:
+        """既存のアクティブなチェックポイントがある場合は更新されること。"""
+        sessions_dir = tmp_path / "session-data"
+        sessions_dir.mkdir()
+        today = session_end.get_date_string()
+        existing = sessions_dir / f"checkpoint-{today}-devgear.md"
+        existing.write_text(
+            "---\ntask: devgear\ncompleted: false\n---\n\n## 変更済みファイル\n- old.py\n\n## 再開コンテキスト\nold\n",
+            encoding="utf-8",
+        )
+        metadata = {"project": "devgear", "branch": "main", "worktree": str(tmp_path)}
+        summary = self._make_summary(40)
+        summary["filesModified"] = ["new.py"]
+
+        session_end._auto_save_checkpoint(summary, metadata, sessions_dir)
+
+        content = existing.read_text(encoding="utf-8")
+        assert "new.py" in content
+        assert "old.py" not in content
+
+    def test_auto_checkpoint_skips_completed(self, tmp_path: Path) -> None:
+        """completed: true の既存チェックポイントは更新しないこと。"""
+        sessions_dir = tmp_path / "session-data"
+        sessions_dir.mkdir()
+        today = session_end.get_date_string()
+        existing = sessions_dir / f"checkpoint-{today}-devgear.md"
+        existing.write_text(
+            "---\ntask: devgear\ncompleted: true\n---\n\n## 変更済みファイル\n- old.py\n",
+            encoding="utf-8",
+        )
+        metadata = {"project": "devgear", "branch": "main", "worktree": str(tmp_path)}
+        summary = self._make_summary(40)
+
+        session_end._auto_save_checkpoint(summary, metadata, sessions_dir)
+
+        content = existing.read_text(encoding="utf-8")
+        assert "completed: true" in content
+
+    def test_run_triggers_checkpoint_when_threshold_met(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """run() がメッセージ数閾値以上のとき _auto_save_checkpoint を呼ぶこと。"""
+        sessions_dir = tmp_path / "session-data"
+        sessions_dir.mkdir()
+        transcript = tmp_path / "transcript.jsonl"
+        lines = [json.dumps({"type": "user", "content": f"msg{i}"}) for i in range(35)]
+        transcript.write_text("\n".join(lines), encoding="utf-8")
+
+        called: list[bool] = []
+
+        def fake_auto_save(summary: dict, metadata: dict, sd: Path) -> None:
+            called.append(True)
+
+        monkeypatch.setattr(session_end, "_auto_save_checkpoint", fake_auto_save)
+        monkeypatch.setattr(session_end, "get_sessions_dir", lambda: sessions_dir)
+        monkeypatch.setattr(session_end, "_record_stop_event", lambda *_a: None)
+        monkeypatch.setattr(session_end, "write_file", lambda *_a: None)
+        monkeypatch.setattr(session_end, "ensure_dir", lambda _: None)
+
+        raw = json.dumps({"transcript_path": str(transcript)})
+        session_end.run(raw)
+
+        assert called, "Expected _auto_save_checkpoint to be called"
+
+
+class TestFilterSessionSummary:
+    """_filter_session_summary のユニットテスト。"""
+
+    _START = "<!-- devgear:SUMMARY:START -->"
+    _END = "<!-- devgear:SUMMARY:END -->"
+
+    def _wrap(self, body: str) -> str:
+        return f"# Session: 2026-05-09\n---\n{self._START}\n{body}\n{self._END}\n### 次回セッションへの引継ぎ\n-\n### 読み込むコンテキスト\n```\n[relevant files]\n```\n"
+
+    def test_keeps_tasks_and_files_modified(self) -> None:
+        """Tasks と Files Modified のみを保持すること。"""
+        from devgear.hooks.session_start import _filter_session_summary
+
+        body = "### Tasks\n- msg1\n- msg2\n\n### Files Modified\n- foo.py\n\n### 使用したツール\nEdit, Read\n\n### 統計\n- ユーザーメッセージ総数: 5"
+        result = _filter_session_summary(self._wrap(body))
+
+        assert "### Tasks" in result
+        assert "msg1" in result
+        assert "### Files Modified" in result
+        assert "foo.py" in result
+        assert "使用したツール" not in result
+        assert "統計" not in result
+
+    def test_no_files_modified_section(self) -> None:
+        """Files Modified がない場合は Tasks のみを返すこと。"""
+        from devgear.hooks.session_start import _filter_session_summary
+
+        body = "### Tasks\n- only task\n\n### 使用したツール\nRead"
+        result = _filter_session_summary(self._wrap(body))
+
+        assert "### Tasks" in result
+        assert "only task" in result
+        assert "Files Modified" not in result
+
+    def test_removes_template_sections(self) -> None:
+        """テンプレート部分（引継ぎ・コンテキスト）を除外すること。"""
+        from devgear.hooks.session_start import _filter_session_summary
+
+        body = "### Tasks\n- t1\n\n### Files Modified\n- a.py"
+        result = _filter_session_summary(self._wrap(body))
+
+        assert "次回セッションへの引継ぎ" not in result
+        assert "読み込むコンテキスト" not in result
+        assert "[relevant files]" not in result
+
+    def test_truncates_when_exceeds_max_length(self) -> None:
+        """2000文字を超える場合は compact_line で切り詰めること。"""
+        from devgear.hooks.session_start import _filter_session_summary
+
+        long_tasks = "\n".join(f"- {'x' * 100}" for _ in range(30))
+        body = f"### Tasks\n{long_tasks}\n\n### Files Modified\n- f.py"
+        result = _filter_session_summary(self._wrap(body), max_length=2000)
+
+        assert len(result) <= 2000
+        assert result.endswith("...")
+
+    def test_fallback_when_no_marker(self) -> None:
+        """SUMMARY マーカーがない旧形式は compact_line にフォールバックすること。"""
+        from devgear.hooks.session_start import _filter_session_summary
+
+        old_format = "## Session Summary\n- did something\n" * 50
+        result = _filter_session_summary(old_format, max_length=2000)
+
+        assert len(result) <= 2000
+
+    def test_empty_content_returns_empty(self) -> None:
+        """空文字列を渡すと空文字列を返すこと。"""
+        from devgear.hooks.session_start import _filter_session_summary
+
+        assert _filter_session_summary("") == ""

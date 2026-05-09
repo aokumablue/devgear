@@ -241,6 +241,60 @@ def _record_stop_event(summary: dict | None, metadata: dict) -> None:
         log(f"[SessionEnd] event_log error: {e}")
 
 
+_CHECKPOINT_THRESHOLD = 30
+_CHECKPOINT_CONTEXT_MAX = 500
+
+
+def _auto_save_checkpoint(summary: dict, metadata: dict, sessions_dir: Path) -> None:
+    """メッセージ数が閾値を超えた場合にチェックポイントを自動保存する。
+
+    既存のアクティブなチェックポイントがあれば Files Modified を更新し、
+    なければ新規作成する。
+
+    Args:
+        summary: extract_session_summary() の戻り値。
+        metadata: get_session_metadata() の戻り値。
+        sessions_dir: セッションデータ保存ディレクトリ。
+    """
+    today = get_date_string()
+    project = metadata.get("project", "unknown")
+    slug = re.sub(r"[^a-z0-9]+", "-", project.lower()).strip("-")
+    checkpoint_path = sessions_dir / f"checkpoint-{today}-{slug}.md"
+
+    files_modified = summary.get("filesModified", [])
+    files_section = "\n".join(f"- {f}" for f in files_modified) if files_modified else "- (なし)"
+    context_hint = compact_line(
+        f"project={project} branch={metadata.get('branch', '?')} messages={summary.get('totalMessages', 0)}",
+        _CHECKPOINT_CONTEXT_MAX,
+    )
+
+    if checkpoint_path.exists():
+        existing = read_file(checkpoint_path) or ""
+        if "completed: true" in existing:
+            log(f"[SessionEnd] Checkpoint already completed, skipping: {checkpoint_path}")
+            return
+        updated = re.sub(
+            r"(?m)^## 変更済みファイル\n.*?(?=\n## |\Z)",
+            f"## 変更済みファイル\n{files_section}",
+            existing,
+            flags=re.DOTALL,
+        )
+        write_file(checkpoint_path, updated)
+        log(f"[SessionEnd] Updated auto-checkpoint: {checkpoint_path}")
+    else:
+        content = (
+            f"---\ntask: {project[:20]}\ncompleted: false\n---\n\n"
+            f"## 目標\n(セッション継続のための自動チェックポイント)\n\n"
+            f"## 完了済みステップ\n- (セッション終了時点まで)\n\n"
+            f"## 進行中\n- [ ] 次のステップを確認してください\n\n"
+            f"## 残りステップ\n- [ ] (次セッションで確認)\n\n"
+            f"## 変更済みファイル\n{files_section}\n\n"
+            f"## 再開コンテキスト\n{context_hint}\n"
+        )
+        write_file(checkpoint_path, content)
+        log(f"[SessionEnd] Created auto-checkpoint: {checkpoint_path}")
+
+
 def run(raw_input: str) -> str:
     """セッション終了フックを実行。入力をそのまま返す（パススルー）"""
     try:
@@ -311,6 +365,10 @@ def run(raw_input: str) -> str:
             log(f"[SessionEnd] Created session file: {session_file}")
 
         _record_stop_event(summary, session_metadata)
+
+        # メッセージ数が閾値を超えた場合はチェックポイントを自動保存
+        if summary and summary.get("totalMessages", 0) >= _CHECKPOINT_THRESHOLD:
+            _auto_save_checkpoint(summary, session_metadata, sessions_dir)
 
     except Exception as err:
         log(f"[SessionEnd] Error: {err}")

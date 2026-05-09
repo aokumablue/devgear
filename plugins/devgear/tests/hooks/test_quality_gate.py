@@ -31,7 +31,7 @@ def _write_step_script(path: Path) -> None:
 
 def _patch_preset(monkeypatch: pytest.MonkeyPatch, preset: dict[str, Any]) -> None:
     """`resolve_quality_gate_config` を固定プリセットに差し替える。"""
-    monkeypatch.setattr(quality_gate, "resolve_quality_gate_config", lambda: preset)
+    monkeypatch.setattr(quality_gate, "resolve_quality_gate_config", lambda **_kw: preset)
 
 
 def test_quality_gate_runs_configured_step_and_preserves_input(

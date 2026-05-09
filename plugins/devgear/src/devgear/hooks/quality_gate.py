@@ -133,11 +133,14 @@ def _base_env() -> dict[str, str]:
     return env
 
 
-def load_config() -> dict[str, Any]:
+def load_config(file_path: str | None = None) -> dict[str, Any]:
     """quality-gate 設定を取得する。
 
     `detect_project().primary_language` に応じた言語プリセット
     (`quality_gate_presets.resolve_quality_gate_config`) から生成する。
+
+    Args:
+        file_path: 変更されたファイルパス。指定時は単一ファイル対象の lint コマンドを生成する。
 
     Returns:
         設定オブジェクトを返します。解決できない場合は空設定を返します。
@@ -145,7 +148,7 @@ def load_config() -> dict[str, Any]:
     Raises:
         例外は発生しません。
     """
-    return resolve_quality_gate_config()
+    return resolve_quality_gate_config(file_path=file_path)
 
 
 def _extract_file_path(input_data: dict[str, Any]) -> str:
@@ -501,7 +504,8 @@ def run(raw_input: str, action: str = "post-edit") -> str:
     """
     normalized_action = _normalize_name(action) or "post-edit"
     input_data = parse_json_object(raw_input) or {}
-    config = load_config()
+    fp = _extract_file_path(input_data) or None
+    config = load_config(file_path=fp)
     _run_configured_rules(normalized_action, raw_input, input_data, config)
 
     return raw_input

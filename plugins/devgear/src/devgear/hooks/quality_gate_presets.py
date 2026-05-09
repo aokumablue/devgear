@@ -88,7 +88,10 @@ def _select_target_path(root: Path, preferred: str = "src") -> str:
     return preferred if (root / preferred).exists() else "."
 
 
-def resolve_quality_gate_config(cwd: str | Path | None = None) -> dict[str, Any]:
+def resolve_quality_gate_config(
+    cwd: str | Path | None = None,
+    file_path: str | None = None,
+) -> dict[str, Any]:
     """現在のプロジェクトに対応する quality-gate 設定を生成する。
 
     `detect_project()` の主要言語からプリセットを選び、rule 形式の辞書で返す。
@@ -97,6 +100,7 @@ def resolve_quality_gate_config(cwd: str | Path | None = None) -> dict[str, Any]
 
     Args:
         cwd: プロジェクトルート。省略時はカレントディレクトリ。
+        file_path: 変更されたファイルパス。指定時は Python の ruff を単一ファイル対象で実行する。
 
     Returns:
         `{"actions": {"post-edit": {"rules": [...]}}}` 形式の辞書。
@@ -124,7 +128,11 @@ def resolve_quality_gate_config(cwd: str | Path | None = None) -> dict[str, Any]
             continue
         resolved_argv = [str(x) for x in argv]
         if language == "python" and resolved_argv[0] == "ruff" and len(resolved_argv) >= 3 and resolved_argv[1] == "check":
-            resolved_argv[-1] = target
+            # file_path が .py ファイルなら単一ファイルを対象にする
+            if file_path and str(file_path).endswith((".py", ".pyi")):
+                resolved_argv[-1] = str(file_path)
+            else:
+                resolved_argv[-1] = target
         elif language in {"javascript", "typescript"} and resolved_argv[:3] == ["npx", "--no-install", "eslint"]:
             resolved_argv[-1] = target
         steps.append({"argv": resolved_argv})
