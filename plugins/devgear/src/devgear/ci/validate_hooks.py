@@ -38,7 +38,6 @@ VALID_HOOK_TYPES = ["command", "http", "prompt", "agent"]
 EVENTS_WITHOUT_MATCHER = {"UserPromptSubmit", "Notification", "Stop", "SubagentStop"}
 
 DEFAULT_HOOKS_FILE = REPO_ROOT / "hooks" / "hooks.json"
-DEFAULT_HOOKS_SCHEMA_PATH = REPO_ROOT / "schemas" / "hooks.schema.json"
 
 
 def _select_hooks_container(data: Any) -> Any:
@@ -142,13 +141,11 @@ def validate_hook_entry(hook: Any, label: str) -> bool:
 
 def validate_hooks(
     hooks_file: str | Path = DEFAULT_HOOKS_FILE,
-    hooks_schema_path: str | Path | None = DEFAULT_HOOKS_SCHEMA_PATH,
 ) -> int:
     """hooks.json を検証し、JS バリデータと同じメッセージを表示する。
 
     Args:
         hooks_file: 処理に渡す hooks_file の値です。
-        hooks_schema_path: 処理に渡す hooks_schema_path の値です。
 
     Returns:
         処理結果を返します。
@@ -234,7 +231,6 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description="Validate hooks.json")
     parser.add_argument("--hooks-file", default=str(DEFAULT_HOOKS_FILE))
-    parser.add_argument("--hooks-schema-path", default=str(DEFAULT_HOOKS_SCHEMA_PATH))
     return parser
 
 
@@ -251,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
         例外は発生しません。
     """
     args = build_parser().parse_args(argv)
-    return validate_hooks(args.hooks_file, args.hooks_schema_path)
+    return validate_hooks(args.hooks_file)
 
 
 if __name__ == "__main__":

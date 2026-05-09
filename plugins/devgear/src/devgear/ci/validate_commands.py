@@ -51,9 +51,10 @@ def validate_commands(
     Raises:
         例外は発生しません。
     """
-    commands_path = Path(commands_dir)
-    agents_path = Path(agents_dir)
-    skills_path = Path(skills_dir)
+    root = Path(root_dir)
+    commands_path = Path(commands_dir) if Path(commands_dir).is_absolute() else root / commands_dir
+    agents_path = Path(agents_dir) if Path(agents_dir).is_absolute() else root / agents_dir
+    skills_path = Path(skills_dir) if Path(skills_dir).is_absolute() else root / skills_dir
 
     if not commands_path.exists():
         print("commands ディレクトリが見つかりません。検証をスキップします")

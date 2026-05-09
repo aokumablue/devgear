@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from devgear.ci import validate_agents, validate_commands, validate_no_personal_paths, validate_rules, validate_skills
+from devgear.ci import (
+    validate_agents,
+    validate_commands,
+    validate_hooks,
+    validate_no_personal_paths,
+    validate_rules,
+    validate_skills,
+)
 
 
 def test_validate_skills_handles_missing_dir_and_success(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -337,3 +344,38 @@ def test_validator_main_entrypoints(
         with pytest.raises(SystemExit) as excinfo:
             runpy.run_module(module_name, run_name="__main__")
         assert excinfo.value.code == 0
+
+
+def test_validate_agents_accepts_quoted_model_values(tmp_path: Path) -> None:
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "double.md").write_text('---\nmodel: "sonnet"\ntools: bash\n---\n', encoding="utf-8")
+    (agents_dir / "single.md").write_text("---\nmodel: 'opus'\ntools: bash\n---\n", encoding="utf-8")
+
+    assert validate_agents.validate_agents(agents_dir) == 0
+
+
+def test_validate_hooks_main_without_schema_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    hooks_file = tmp_path / "hooks.json"
+    hooks_file.write_text(
+        '{"SessionStart": [{"matcher": ".", "hooks": [{"type": "command", "command": "echo hi"}]}]}',
+        encoding="utf-8",
+    )
+
+    assert validate_hooks.main(["--hooks-file", str(hooks_file)]) == 0
+    assert "1 個のフックマッチャーを検証しました" in capsys.readouterr().out
+
+
+def test_validate_commands_resolves_relative_dirs_via_root_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commands_dir = tmp_path / "commands"
+    agents_dir = tmp_path / "agents"
+    skills_dir = tmp_path / "skills"
+    commands_dir.mkdir()
+    agents_dir.mkdir()
+    skills_dir.mkdir()
+    (commands_dir / "c-test.md").write_text("Test command.\n", encoding="utf-8")
+
+    assert validate_commands.validate_commands(tmp_path, "commands", "agents", "skills") == 0
+    assert "1 個のコマンドファイルを検証しました" in capsys.readouterr().out
