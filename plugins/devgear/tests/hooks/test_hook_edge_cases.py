@@ -118,9 +118,11 @@ def test_run_with_flags_returns_child_stdout_when_hook_enabled(monkeypatch: pyte
 
 
 def test_run_with_flags_skips_disabled_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
     stdout: list[str] = []
     monkeypatch.setattr(run_with_flags.sys, "argv", ["launcher.py", "hook-id", "target"])
-    monkeypatch.setattr(run_with_flags, "read_raw_stdin_with_truncation", lambda max_bytes=0: ("payload", False))
+    monkeypatch.setattr(run_with_flags.sys, "stdin", io.StringIO("payload"))
     monkeypatch.setattr(run_with_flags, "is_hook_enabled", lambda hook_id, profiles=None: False)
     monkeypatch.setattr(
         run_with_flags.subprocess,

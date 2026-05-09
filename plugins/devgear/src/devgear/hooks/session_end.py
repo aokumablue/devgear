@@ -10,7 +10,6 @@ Stop イベント時（各応答後）に実行されます。セッショント
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 
@@ -300,10 +299,6 @@ def run(raw_input: str) -> str:
     try:
         input_data = parse_json_object(raw_input)
         transcript_path = input_data.get("transcript_path") if input_data else None
-
-        if not transcript_path:
-            # フォールバック: 後方互換性のため環境変数を試す
-            transcript_path = os.environ.get("CLAUDE_TRANSCRIPT_PATH")
 
         sessions_dir = get_sessions_dir()
         today = get_date_string()

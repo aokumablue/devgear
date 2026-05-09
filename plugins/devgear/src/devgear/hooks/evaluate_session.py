@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from devgear.hooks.hook_common import parse_json_object, read_raw_stdin
@@ -45,11 +44,7 @@ def main() -> int:
         raw = read_raw_stdin()
         input_data = parse_json_object(raw)
 
-        transcript_path = None
-        if input_data:
-            transcript_path = input_data.get("transcript_path")
-        if not transcript_path:
-            transcript_path = os.environ.get("CLAUDE_TRANSCRIPT_PATH")
+        transcript_path = input_data.get("transcript_path") if input_data else None
 
         config_file = _default_config_path()
 

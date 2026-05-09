@@ -859,8 +859,8 @@ class Database:
         """インタラクションログを取得する。"""
         if session_id:
             rows = self.conn.execute(
-                "SELECT * FROM interaction_logs WHERE session_id = ? ORDER BY interaction_index",
-                (session_id,),
+                "SELECT * FROM interaction_logs WHERE session_id = ? ORDER BY interaction_index LIMIT ?",
+                (session_id, limit),
             ).fetchall()
         elif project:
             rows = self.conn.execute(

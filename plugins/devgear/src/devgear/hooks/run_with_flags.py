@@ -150,11 +150,11 @@ def main() -> int:
     profiles_csv = sys.argv[3] if len(sys.argv) > 3 else None
     target_args = sys.argv[4:] if len(sys.argv) > 4 else []
 
-    raw, truncated = read_raw_stdin_with_truncation()
-
     if not is_hook_enabled(hook_id, profiles=profiles_csv):
-        write_stdout(raw)
+        write_stdout(sys.stdin.read())
         return 0
+
+    raw, truncated = read_raw_stdin_with_truncation()
 
     # 切り捨てが発生した状態で保護系フックへ渡すとバイパスに悪用されうるため、
     # run_with_flags 側でブロックする（該当フックに限定）。

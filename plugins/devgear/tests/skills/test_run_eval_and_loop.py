@@ -221,6 +221,13 @@ def test_run_single_query_uses_model_and_rejects_unknown_tool(tmp_path: Path, mo
                     }
                 )
                 + "\n"
+                + json.dumps(
+                    {
+                        "type": "stream_event",
+                        "event": {"type": "message_stop"},
+                    }
+                )
+                + "\n"
             ).encode("utf-8")
         ]
     )

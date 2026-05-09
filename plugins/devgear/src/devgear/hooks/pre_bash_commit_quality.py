@@ -131,7 +131,7 @@ def find_file_issues(file_path: str) -> list[dict]:
                 )
 
             # Issue 参照のない TODO/FIXME をチェック
-            todo_match = re.search(r"//\s*(TODO|FIXME):?\s*(.+)", line)
+            todo_match = re.search(r"(?://|#)\s*(TODO|FIXME):?\s*(.+)", line)
             if todo_match and not re.search(r"#\d+|issue", todo_match.group(2), re.IGNORECASE):
                 issues.append(
                     {

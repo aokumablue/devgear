@@ -12,7 +12,7 @@ from pathlib import Path
 from devgear.ci.ci_common import REPO_ROOT
 
 DEFAULT_ROOT = REPO_ROOT
-IGNORED_DIRS = {".git", "node_modules", ".dmux", ".next", "coverage"}
+IGNORED_DIRS = {".git", "node_modules", ".dmux", ".next", "coverage", ".venv", ".pytest_cache"}
 TEXT_EXTENSIONS = {
     ".md",
     ".mdx",

@@ -175,7 +175,9 @@ def _print_status(project_dir: Path, pid_file: Path, log_file: Path, instincts_d
         except OSError:
             observation_count = 0
         print(f"Observations: {observation_count} lines")
-        instinct_count = len(list(instincts_dir.glob("*.yaml"))) if instincts_dir.exists() else 0
+        instinct_count = sum(
+            len(list(instincts_dir.glob(pat))) for pat in ("*.md", "*.yaml", "*.yml")
+        ) if instincts_dir.exists() else 0
         print(f"Instincts: {instinct_count}")
         return 0
 
