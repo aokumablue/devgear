@@ -17,7 +17,7 @@ description: c-refactor前にファイル単位ロールバック計画を確定
 
 ## 入力
 
-- 変更対象（既定: `git diff --name-only HEAD`）
+- 変更対象（呼び出し元からの `scope_files`、引数指定パス（ディレクトリ→配下全ファイル / ファイル→そのファイル）、またはフォールバック: `git diff --name-only HEAD`）
 - `s-refprep` が作成したグループ/依存関係/テストセット
 - 高リスク境界（公開API、外部I/O、永続化境界）
 

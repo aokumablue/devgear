@@ -1,6 +1,6 @@
 ---
 name: c-refactor
-description: 変更差分を対象に性能劣化防止と明確欠陥改善、デッドコード排除、可読性改善、レビューまで一気通貫で実行。
+description: コードを一気通貫でリファクタリング。差分・指定パスの両方に対応。性能劣化防止・デッドコード排除・可読性改善・レビューを実行。
 command: /c-refactor
 ---
 
@@ -12,15 +12,14 @@ search: `refactor clean simplify perf review {対象ファイルパス}` / `crit
 record: `{"event_type": "refactor", "content": "Scope: {scope}. Clean: {cleaned}. Simplify: {simplified}. Perf: {perf_fixed}. Blockers: {blockers}"}`
 参照: 過去リファクタ履歴 / ファイル単位リバート履歴 / 頻出CRITICAL・HIGH指摘。
 
-## ステップ1: preflight（既定スコープ + 実行準備）
+## ステップ1: preflight（スコープ確定 + 実行準備）
 
-既定スコープは**変更差分のみ**:
+スコープ確定（優先順）:
 
-```bash
-git diff --name-only HEAD
-```
-
-引数でファイル/ディレクトリ指定があれば、そちらを対象にする。
+1. 引数にパス指定がある場合:
+   - ディレクトリパスの場合: そのディレクトリ配下の全ファイルを対象にする
+   - ファイルパスの場合: そのファイルのみを対象にする
+2. 引数がない場合: `git diff --name-only HEAD` の差分ファイルを対象にする
 
 着手前に以下を実行して準備を固定:
 
@@ -103,7 +102,7 @@ Final Gate: PASS / BLOCKED
 
 ## ルール
 
-- **既定スコープは変更差分のみ**
+- **既定スコープは変更差分。パス/ディレクトリ指定で任意ファイルにも対応**
 - **失敗時は必ずファイル単位リバート**
 - **CRITICAL/HIGH が残る状態では承認・コミットしない**
 - **機能変更禁止（WHAT不変）**。挙動変更の疑義がある変更は適用せず、要確認として報告する
@@ -112,4 +111,4 @@ Final Gate: PASS / BLOCKED
 
 ## 引数
 
-$ARGUMENTS: `[ファイルパス or ディレクトリ]`
+$ARGUMENTS: `[ファイルパス or ディレクトリ]`（省略時: 変更差分）
