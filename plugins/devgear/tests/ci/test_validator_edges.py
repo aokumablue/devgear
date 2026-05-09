@@ -366,6 +366,16 @@ def test_validate_hooks_main_without_schema_path(tmp_path: Path, capsys: pytest.
     assert "1 個のフックマッチャーを検証しました" in capsys.readouterr().out
 
 
+def test_validate_agents_accepts_quoted_model_with_spaces(tmp_path: Path) -> None:
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "leading.md").write_text('---\nmodel: " sonnet"\ntools: bash\n---\n', encoding="utf-8")
+    (agents_dir / "trailing.md").write_text('---\nmodel: "opus "\ntools: bash\n---\n', encoding="utf-8")
+    (agents_dir / "both.md").write_text("---\nmodel: ' haiku '\ntools: bash\n---\n", encoding="utf-8")
+
+    assert validate_agents.validate_agents(agents_dir) == 0
+
+
 def test_validate_commands_resolves_relative_dirs_via_root_dir(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

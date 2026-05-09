@@ -35,7 +35,7 @@ def extract_frontmatter(content: str) -> dict[str, str] | None:
         colon_idx = line.find(":")
         if colon_idx > 0:
             key = line[:colon_idx].strip()
-            value = line[colon_idx + 1 :].strip().strip("\"'")
+            value = line[colon_idx + 1 :].strip().strip("\"'").strip()
             frontmatter[key] = value
     return frontmatter
 
