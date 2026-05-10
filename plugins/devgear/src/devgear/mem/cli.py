@@ -23,7 +23,6 @@ from devgear.mem.compaction import (
 )
 from devgear.mem.context import build_context
 from devgear.mem.database import Database, InteractionLog, MemoryChunk, ProjectProfile, Session
-from devgear.mem.embedding import embed
 from devgear.mem.logger import get as _get_logger
 from devgear.mem.search import SearchResult, SearchService, should_inject_memory
 from devgear.mem.settings import Settings
@@ -38,6 +37,13 @@ def _open_db(settings: Settings):
         yield db
     finally:
         db.close()
+
+
+def embed(texts: list[str], model_name: str) -> list[list[float]]:
+    """埋め込み生成を遅延ロードで実行する。"""
+    from devgear.mem.embedding import embed as _embed
+
+    return _embed(texts, model_name)
 
 
 def _emit_session_start_output(additional_context: str = "") -> None:

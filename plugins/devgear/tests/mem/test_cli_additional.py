@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import builtins
+import importlib
 import io
 import json
 import sys
@@ -680,6 +682,39 @@ def test_main_routes_all_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
         cli.main()
 
     assert called == commands
+
+
+def test_setup_command_imports_without_torch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    import devgear.mem.logger as logger_mod
+
+    original_import = builtins.__import__
+
+    def guarded_import(
+        name: str,
+        globals: dict | None = None,
+        locals: dict | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
+        if name == "devgear.mem.embedding":
+            raise AssertionError("devgear.mem.embedding should not be imported during setup")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.delitem(sys.modules, "devgear.mem.embedding", raising=False)
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    reloaded_cli = importlib.reload(cli)
+
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr(reloaded_cli.Settings, "load", lambda: settings)
+    monkeypatch.setattr(logger_mod, "setup", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sys, "argv", ["python", "setup"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+
+    reloaded_cli.main()
+
+    assert "devgear.mem.embedding" not in sys.modules
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
 
 
 def test_main_help_and_unknown_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
