@@ -18,6 +18,18 @@ _DEVGEAR_DIR = Path.home() / ".devgear"
 _VERSION_FILE = _DEVGEAR_DIR / "plugin_installed_version"
 
 
+def _session_start_output() -> str:
+    """SessionStart 互換の hookSpecificOutput を返す。"""
+    return json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
+    )
+
+
 def _get_plugin_version(plugin_root: Path) -> str | None:
     """plugin.json からプラグインバージョンを読み取る。
 
@@ -87,37 +99,20 @@ def run(_raw_input: str) -> str:
     plugin_root_env = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if not plugin_root_env:
         print("[SessionInstall] CLAUDE_PLUGIN_ROOT が設定されていません。スキップします。", file=sys.stderr)
-        return json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "session:install",
-                "skipped": True,
-                "reason": "CLAUDE_PLUGIN_ROOT not set",
-            }
-        })
+        return _session_start_output()
 
     plugin_root = Path(plugin_root_env)
     current_version = _get_plugin_version(plugin_root)
 
     if current_version is None:
         print("[SessionInstall] バージョンを取得できませんでした。スキップします。", file=sys.stderr)
-        return json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "session:install",
-                "skipped": True,
-                "reason": "version not found",
-            }
-        })
+        return _session_start_output()
 
     installed_version = _get_installed_version()
 
     if installed_version == current_version:
-        return json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "session:install",
-                "skipped": True,
-                "version": current_version,
-            }
-        })
+        print(f"[SessionInstall] 既にインストール済みです: {current_version}", file=sys.stderr)
+        return _session_start_output()
 
     print(
         f"[SessionInstall] バージョン変更を検出しました: {installed_version!r} → {current_version!r}",
@@ -133,14 +128,7 @@ def run(_raw_input: str) -> str:
         )
     except Exception as e:
         print(f"[SessionInstall] install.sh の実行に失敗しました: {e}", file=sys.stderr)
-        return json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "session:install",
-                "skipped": False,
-                "success": False,
-                "version": current_version,
-            }
-        })
+        return _session_start_output()
 
     if result.stdout:
         print(result.stdout, end="", file=sys.stderr)
@@ -152,26 +140,12 @@ def run(_raw_input: str) -> str:
             f"[SessionInstall] install.sh が失敗しました (exit {result.returncode})。次回再試行します。",
             file=sys.stderr,
         )
-        return json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "session:install",
-                "skipped": False,
-                "success": False,
-                "version": current_version,
-            }
-        })
+        return _session_start_output()
 
     _write_installed_version(current_version)
     print(f"[SessionInstall] インストール完了: {current_version}", file=sys.stderr)
 
-    return json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "session:install",
-            "skipped": False,
-            "success": True,
-            "version": current_version,
-        }
-    })
+    return _session_start_output()
 
 
 def main() -> int:

@@ -93,6 +93,15 @@ class TestRun:
         install_sh.write_text("#!/bin/bash\necho installed")
         return tmp_path
 
+    def _assert_session_start_output(self, result: str) -> None:
+        payload = json.loads(result)
+        assert payload == {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
+
     def test_skips_when_no_claude_plugin_root(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
     ) -> None:
@@ -100,8 +109,12 @@ class TestRun:
 
         result = json.loads(session_install.run(""))
 
-        assert result["hookSpecificOutput"]["skipped"] is True
-        assert result["hookSpecificOutput"]["reason"] == "CLAUDE_PLUGIN_ROOT not set"
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
         assert "CLAUDE_PLUGIN_ROOT" in capsys.readouterr().err
 
     def test_skips_when_plugin_json_missing(
@@ -111,8 +124,12 @@ class TestRun:
 
         result = json.loads(session_install.run(""))
 
-        assert result["hookSpecificOutput"]["skipped"] is True
-        assert result["hookSpecificOutput"]["reason"] == "version not found"
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
         assert "バージョス" not in capsys.readouterr().err  # just check it ran without error
 
     def test_skips_when_version_matches(
@@ -126,8 +143,12 @@ class TestRun:
 
         result = json.loads(session_install.run(""))
 
-        assert result["hookSpecificOutput"]["skipped"] is True
-        assert result["hookSpecificOutput"]["version"] == "0.0.2"
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
 
     def test_runs_install_when_no_version_file(
         self,
@@ -148,9 +169,12 @@ class TestRun:
 
         result = json.loads(session_install.run(""))
 
-        assert result["hookSpecificOutput"]["skipped"] is False
-        assert result["hookSpecificOutput"]["success"] is True
-        assert result["hookSpecificOutput"]["version"] == "0.0.2"
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
         assert version_file.read_text() == "0.0.2\n"
 
     def test_runs_install_when_version_changed(
@@ -173,8 +197,12 @@ class TestRun:
 
         result = json.loads(session_install.run(""))
 
-        assert result["hookSpecificOutput"]["success"] is True
-        assert result["hookSpecificOutput"]["version"] == "0.0.3"
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
         assert version_file.read_text() == "0.0.3\n"
 
     def test_does_not_write_version_on_install_failure(
@@ -197,7 +225,12 @@ class TestRun:
 
         result = json.loads(session_install.run(""))
 
-        assert result["hookSpecificOutput"]["success"] is False
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
         # バージョンファイルはまだ古いバージョンのまま（次回再試行）
         assert version_file.read_text() == "0.0.2\n"
         assert "失敗" in capsys.readouterr().err
@@ -221,7 +254,12 @@ class TestRun:
 
         result = json.loads(session_install.run(""))
 
-        assert result["hookSpecificOutput"]["success"] is False
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
         assert version_file.read_text() == "0.0.2\n"
         assert "実行に失敗" in capsys.readouterr().err
 
