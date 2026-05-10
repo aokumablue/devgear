@@ -108,3 +108,54 @@ def basename(path: str) -> str:
         例外は発生しません。
     """
     return Path(path).name
+
+
+# SessionStart フックが stdout に出力すべき hookSpecificOutput を持つ hook_id 集合。
+# run_with_flags は子の stdout が空のとき、この集合に含まれる hook_id のみ
+# フォールバック JSON を出力する。新規 SessionStart hook を追加する際はここに追加する。
+SESSION_START_HOOK_IDS: frozenset[str] = frozenset(
+    {
+        "session:start",
+        "session:mem:setup",
+        "session:mem:context",
+        "session:mem:record-project-profile",
+    }
+)
+
+
+def emit_session_start_output(additional_context: str = "") -> str:
+    """SessionStart 用の hookSpecificOutput JSON 文字列を返す。
+
+    Args:
+        additional_context: コンテキストに注入する追加文字列。
+
+    Returns:
+        hookSpecificOutput を含む JSON 文字列。
+
+    Raises:
+        例外は発生しません。
+    """
+    return json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": additional_context,
+            }
+        },
+        ensure_ascii=False,
+    )
+
+
+def print_session_start_output(additional_context: str = "") -> None:
+    """SessionStart 用の hookSpecificOutput を stdout に出力する。
+
+    Args:
+        additional_context: コンテキストに注入する追加文字列。
+
+    Returns:
+        None
+
+    Raises:
+        例外は発生しません。
+    """
+    print(emit_session_start_output(additional_context))

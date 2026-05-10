@@ -78,7 +78,8 @@ def test_search_command_returns_results(monkeypatch, tmp_path: Path) -> None:
         files_read=["README.md"],
         files_modified=[],
     )
-    monkeypatch.setattr(cli.SearchService, "search", lambda self, **kwargs: [fake_result])
+    import devgear.mem.search as search_mod
+    monkeypatch.setattr(search_mod.SearchService, "search", lambda self, **kwargs: [fake_result])
 
     stdout, stderr = _run_cli(
         monkeypatch,
@@ -122,7 +123,8 @@ def test_session_init_injects_context_from_local_db(monkeypatch, tmp_path: Path)
         files_read=[],
         files_modified=["src/app.py"],
     )
-    monkeypatch.setattr(cli.SearchService, "search", lambda self, **kwargs: [fake_result])
+    import devgear.mem.search as search_mod
+    monkeypatch.setattr(search_mod.SearchService, "search", lambda self, **kwargs: [fake_result])
 
     stdout, stderr = _run_cli(
         monkeypatch,
@@ -446,8 +448,9 @@ class TestSessionInitPgIntegration:
         )
         team_calls: list[bool] = []
 
-        monkeypatch.setattr(cli.SearchService, "search", lambda self, **kwargs: [fake_local])
-        monkeypatch.setattr(cli.SearchService, "search_team", lambda self, **kwargs: team_calls.append(True) or [])
+        import devgear.mem.search as search_mod
+        monkeypatch.setattr(search_mod.SearchService, "search", lambda self, **kwargs: [fake_local])
+        monkeypatch.setattr(search_mod.SearchService, "search_team", lambda self, **kwargs: team_calls.append(True) or [])
         monkeypatch.setattr(settings_mod, "_DEFAULT_DATA_DIR", tmp_path)
         _patch_pg_enabled(monkeypatch, settings_mod)
 
@@ -486,8 +489,9 @@ class TestSessionInitPgIntegration:
         )
         team_calls: list[bool] = []
 
-        monkeypatch.setattr(cli.SearchService, "search", lambda self, **kwargs: [fake_local])
-        monkeypatch.setattr(cli.SearchService, "search_team", lambda self, **kwargs: team_calls.append(True) or [])
+        import devgear.mem.search as search_mod
+        monkeypatch.setattr(search_mod.SearchService, "search", lambda self, **kwargs: [fake_local])
+        monkeypatch.setattr(search_mod.SearchService, "search_team", lambda self, **kwargs: team_calls.append(True) or [])
 
         stdout, stderr = _run_cli(
             monkeypatch,
@@ -533,8 +537,9 @@ class TestSessionInitPgIntegration:
 
         monkeypatch.setattr(settings_mod, "_DEFAULT_DATA_DIR", tmp_path)
         _patch_pg_enabled(monkeypatch, settings_mod)
-        monkeypatch.setattr(cli.SearchService, "search", lambda self, **kwargs: [fake_local])
-        monkeypatch.setattr(cli.SearchService, "search_team", lambda self, **kwargs: (_ for _ in ()).throw(RuntimeError("PG down")))
+        import devgear.mem.search as search_mod
+        monkeypatch.setattr(search_mod.SearchService, "search", lambda self, **kwargs: [fake_local])
+        monkeypatch.setattr(search_mod.SearchService, "search_team", lambda self, **kwargs: (_ for _ in ()).throw(RuntimeError("PG down")))
 
         stdout, stderr = _run_cli(
             monkeypatch,

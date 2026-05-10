@@ -8,8 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
+import devgear.mem.bridge as bridge_mod
 import devgear.mem.cli as cli
+import devgear.mem.compaction as compaction_mod
 import devgear.mem.pg_database as pg_database_mod
+import devgear.mem.search as search_mod
 from devgear.mem.database import MemoryChunk, _parse_json_list
 from devgear.mem.search import SearchResult
 from tests.mem.conftest import FakeDB, make_settings
@@ -117,12 +120,12 @@ def test_session_end_inner_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     monkeypatch.setattr(cli.log, "warning", lambda msg, *args: warnings.append(msg % args if args else msg))
     monkeypatch.setattr(cli, "embed", lambda texts, model: [[0.1, 0.2]])
     monkeypatch.setattr(
-        cli,
+        bridge_mod,
         "sync_session_to_observations",
         lambda db, session_id: (_ for _ in ()).throw(RuntimeError("sync boom")),
     )
-    monkeypatch.setattr(cli, "detect_low_quality", lambda db: [])
-    monkeypatch.setattr(cli, "find_near_duplicates", lambda db: [])
+    monkeypatch.setattr(compaction_mod, "detect_low_quality", lambda db: [])
+    monkeypatch.setattr(compaction_mod, "find_near_duplicates", lambda db: [])
     monkeypatch.setattr(cli.time, "time", lambda: 100.0)
 
     def fake_execute(sql: str, params=None):  # noqa: ANN001
@@ -160,7 +163,7 @@ def test_search_structured_query_and_compact_dry_run(
     db = FakeDB([chunk])
     monkeypatch.setattr(cli, "_open_db", lambda settings: db)
     monkeypatch.setattr(
-        cli.SearchService,
+        search_mod.SearchService,
         "search",
         lambda self, **kwargs: [SearchResult("c1", 0.9, "content", "prompt", "repo", 1704067200, ["Edit"], [], [])],
     )

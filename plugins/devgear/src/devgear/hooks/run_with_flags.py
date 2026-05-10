@@ -7,13 +7,19 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-from devgear.hooks.hook_common import MAX_STDIN_BYTES, write_stderr, write_stdout
+from devgear.hooks.hook_common import (
+    MAX_STDIN_BYTES,
+    write_stderr,
+    write_stdout,
+)
+from devgear.hooks.hook_common import (
+    SESSION_START_HOOK_IDS as _SESSION_START_HOOK_IDS,
+)
 from devgear.lib.hook_flags import is_hook_enabled
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -22,13 +28,6 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # 設定ファイル保護は truncated payload を見逃すとバイパスに悪用されうるため、
 # run_with_flags 側でブロックする。
 _TRUNCATION_GUARD_HOOK_IDS = frozenset({"pre:config-protection"})
-_SESSION_START_HOOK_IDS = frozenset(
-    {
-        "session:start",
-        "session:mem:context",
-        "session:mem:record-project-profile",
-    }
-)
 
 
 def read_raw_stdin_with_truncation(max_bytes: int = MAX_STDIN_BYTES) -> tuple[str, bool]:
@@ -92,14 +91,9 @@ def _truncation_blocked_message(hook_id: str, max_bytes: int) -> str:
 
 def _session_start_fallback_output() -> str:
     """SessionStart の最低限の JSON 出力を返す。"""
-    return json.dumps(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": "",
-            }
-        }
-    )
+    from devgear.hooks.hook_common import emit_session_start_output
+
+    return emit_session_start_output()
 
 
 def resolve_target_command(target: str, args: list[str] | None = None) -> list[str]:
@@ -205,6 +199,10 @@ def main() -> int:
     if result.stderr:
         write_stderr(result.stderr)
 
+    # SessionStart 系フックで子が非 0 終了しても "Failed with non-blocking status code" を出さない。
+    # stdout には既に上で hookSpecificOutput JSON が書き出されている。
+    if hook_id in _SESSION_START_HOOK_IDS and result.returncode != 0:
+        return 0
     return result.returncode
 
 

@@ -8,6 +8,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+import devgear.mem.search as search_mod
 from devgear.mem import cli as cli_module
 from devgear.mem.settings import Settings, SyncSettings, TeamSettings
 
@@ -225,7 +226,7 @@ def test_team_context_and_session_init_failure_paths(
 ) -> None:
     settings = _settings()
     monkeypatch.setattr(cli_module, "get_git_user_name", lambda: "me")
-    monkeypatch.setattr(cli_module, "should_inject_memory", lambda prompt: True)
+    monkeypatch.setattr(search_mod, "should_inject_memory", lambda prompt: True)
 
     cli_module._handle_team_context(settings, {"cwd": "/"})
     payload = json.loads(capsys.readouterr().out)

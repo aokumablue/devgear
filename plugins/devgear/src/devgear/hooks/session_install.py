@@ -8,26 +8,23 @@ install.sh の自動実行を管理する SessionStart フック。
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
+from devgear.hooks.hook_common import emit_session_start_output as _emit_session_start_output
+
 _DEVGEAR_DIR = Path.home() / ".devgear"
 _VERSION_FILE = _DEVGEAR_DIR / "plugin_installed_version"
+_LOCK_FILE = _DEVGEAR_DIR / "install.lock"
 
 
 def _session_start_output() -> str:
     """SessionStart 互換の hookSpecificOutput を返す。"""
-    return json.dumps(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": "",
-            }
-        }
-    )
+    return _emit_session_start_output()
 
 
 def _get_plugin_version(plugin_root: Path) -> str | None:
@@ -120,32 +117,50 @@ def run(_raw_input: str) -> str:
     )
 
     install_sh = plugin_root / "install.sh"
+
+    # 複数セッション同時起動時の .venv レース破壊を防ぐため flock で排他制御する。
+    _DEVGEAR_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        result = subprocess.run(
-            ["bash", str(install_sh)],
-            text=True,
-            capture_output=True,
-        )
+        lock_fp = open(_LOCK_FILE, "w")  # noqa: SIM115 - flock のため with 外で open
+        fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX)
     except Exception as e:
-        print(f"[SessionInstall] install.sh の実行に失敗しました: {e}", file=sys.stderr)
+        print(f"[SessionInstall] ロック取得失敗: {e}", file=sys.stderr)
         return _session_start_output()
 
-    if result.stdout:
-        print(result.stdout, end="", file=sys.stderr)
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
+    try:
+        # ロック取得後に再チェック: 別プロセスが既に install 済みかもしれない
+        if _get_installed_version() == current_version:
+            print(f"[SessionInstall] 別プロセスがインストール済み: {current_version}", file=sys.stderr)
+            return _session_start_output()
 
-    if result.returncode != 0:
-        print(
-            f"[SessionInstall] install.sh が失敗しました (exit {result.returncode})。次回再試行します。",
-            file=sys.stderr,
-        )
+        try:
+            result = subprocess.run(
+                ["bash", str(install_sh)],
+                text=True,
+                capture_output=True,
+            )
+        except Exception as e:
+            print(f"[SessionInstall] install.sh の実行に失敗しました: {e}", file=sys.stderr)
+            return _session_start_output()
+
+        if result.stdout:
+            print(result.stdout, end="", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+
+        if result.returncode != 0:
+            print(
+                f"[SessionInstall] install.sh が失敗しました (exit {result.returncode})。次回再試行します。",
+                file=sys.stderr,
+            )
+            return _session_start_output()
+
+        _write_installed_version(current_version)
+        print(f"[SessionInstall] インストール完了: {current_version}", file=sys.stderr)
         return _session_start_output()
-
-    _write_installed_version(current_version)
-    print(f"[SessionInstall] インストール完了: {current_version}", file=sys.stderr)
-
-    return _session_start_output()
+    finally:
+        fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
+        lock_fp.close()
 
 
 def main() -> int:
@@ -167,6 +182,7 @@ def main() -> int:
         return 0
     except Exception as err:
         print(f"[SessionInstall] エラー: {err}", file=sys.stderr)
+        print(_session_start_output(), end="")
         return 0
 
 

@@ -173,12 +173,15 @@ def test_handle_session_end_and_compact(monkeypatch: pytest.MonkeyPatch, tmp_pat
         created_at_epoch=1704067200,
     )
     db = FakeDB([chunk])
+    import devgear.mem.bridge as bridge_mod
+    import devgear.mem.compaction as compaction_mod
+
     monkeypatch.setattr(cli, "_open_db", lambda settings: open_fake_db(db))
     monkeypatch.setattr(cli, "embed", lambda texts, model: [[0.1, 0.2]])
-    monkeypatch.setattr(cli, "sync_session_to_observations", lambda db, session_id: 1)
-    monkeypatch.setattr(cli, "detect_low_quality", lambda db: ["c1"])
-    monkeypatch.setattr(cli, "find_near_duplicates", lambda db: [("c1", "c2")])
-    monkeypatch.setattr(cli, "optimize_db", lambda db: {"fragmentation_before": 0.25})
+    monkeypatch.setattr(bridge_mod, "sync_session_to_observations", lambda db, session_id: 1)
+    monkeypatch.setattr(compaction_mod, "detect_low_quality", lambda db: ["c1"])
+    monkeypatch.setattr(compaction_mod, "find_near_duplicates", lambda db: [("c1", "c2")])
+    monkeypatch.setattr(compaction_mod, "optimize_db", lambda db: {"fragmentation_before": 0.25})
     monkeypatch.setattr(cli.time, "time", lambda: 100.0)
 
     cli._handle_session_end(settings, {"session_id": "s1"})
@@ -199,7 +202,9 @@ def test_handle_setup_and_observe_branches(monkeypatch: pytest.MonkeyPatch, tmp_
     cli._handle_setup(settings)
     assert settings.data_path.exists()
 
-    monkeypatch.setattr(cli, "build_chunk_from_tool_use", lambda **kwargs: MemoryChunk(
+    import devgear.mem.chunker as chunker_mod
+
+    monkeypatch.setattr(chunker_mod, "build_chunk_from_tool_use", lambda **kwargs: MemoryChunk(
         session_id=kwargs["session_id"],
         project=kwargs["project"],
         chunk_index=kwargs["chunk_index"],
@@ -350,10 +355,8 @@ def test_main_wraps_handler_exceptions(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     monkeypatch.setattr(sys, "argv", ["python", "context"])
 
-    with pytest.raises(SystemExit) as excinfo:
-        cli.main()
-
-    assert excinfo.value.code == 0
+    # SessionStart 系コマンドは例外発生時も JSON を出力して自然終了（SystemExit を上げない）
+    cli.main()
     assert any("コマンド context 失敗" in error for error in errors)
 
 
@@ -381,11 +384,14 @@ def test_handle_session_end_auto_compact_error(monkeypatch: pytest.MonkeyPatch, 
         created_at_epoch=1704067200,
     )
     db = FakeDB([chunk])
+    import devgear.mem.bridge as bridge_mod
+    import devgear.mem.compaction as compaction_mod
+
     monkeypatch.setattr(cli, "_open_db", lambda settings: open_fake_db(db))
     monkeypatch.setattr(cli, "embed", lambda texts, model: [[0.1, 0.2]])
-    monkeypatch.setattr(cli, "sync_session_to_observations", lambda db, session_id: 1)
-    monkeypatch.setattr(cli, "detect_low_quality", lambda db: (_ for _ in ()).throw(RuntimeError("compact boom")))
-    monkeypatch.setattr(cli, "find_near_duplicates", lambda db: [])
+    monkeypatch.setattr(bridge_mod, "sync_session_to_observations", lambda db, session_id: 1)
+    monkeypatch.setattr(compaction_mod, "detect_low_quality", lambda db: (_ for _ in ()).throw(RuntimeError("compact boom")))
+    monkeypatch.setattr(compaction_mod, "find_near_duplicates", lambda db: [])
     monkeypatch.setattr(cli.time, "time", lambda: 100.0)
     warnings: list[str] = []
     monkeypatch.setattr(cli.log, "warning", lambda msg, *args: warnings.append(msg % args if args else msg))
@@ -636,7 +642,7 @@ def test_handle_dashboard_json_and_main_entrypoints(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(sys, "argv", ["python", "not-a-command"])
     with pytest.raises(SystemExit) as excinfo:
         cli.main()
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 0  # 未知コマンドは exit 0（"Failed with non-blocking status code" 防止）
 
 
 def test_collect_project_overview_skips_invalid_registry_entries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -732,7 +738,7 @@ def test_main_help_and_unknown_command(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setattr(sys, "argv", ["python", "bogus"])
     with pytest.raises(SystemExit) as excinfo:
         cli.main()
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 0  # 未知コマンドは exit 0（"Failed with non-blocking status code" 防止）
 
 
 def test_cli_entrypoint_module(monkeypatch: pytest.MonkeyPatch) -> None:

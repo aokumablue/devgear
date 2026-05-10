@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 
-from devgear.hooks.hook_common import read_raw_stdin
+from devgear.hooks.hook_common import emit_session_start_output, read_raw_stdin
 from devgear.lib.core_utils import (
     ensure_dir,
     find_files,
@@ -332,16 +332,8 @@ def run(_raw_input: str) -> str:
     except Exception as e:
         log(f"[SessionStart] Slim injection error: {e}")
 
-    # 出力ペイロードを構築
     additional_context = "\n\n".join(additional_context_parts)
-    payload = {
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": additional_context,
-        }
-    }
-
-    return json.dumps(payload)
+    return emit_session_start_output(additional_context)
 
 
 def main() -> int:
@@ -363,6 +355,7 @@ def main() -> int:
         return 0
     except Exception as err:
         log(f"[SessionStart] Error: {err}")
+        print(emit_session_start_output(), end="")
         return 0
 
 

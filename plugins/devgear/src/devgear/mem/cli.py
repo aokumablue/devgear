@@ -10,28 +10,32 @@ import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from devgear.hooks.hook_common import print_session_start_output as _emit_session_start_output
 from devgear.lib.core_utils import get_git_user_name
 from devgear.lib.skill_evolution import collect_skill_health, summarize_health_report
 from devgear.lib.slim_text import compact_line, first_meaningful_line
-from devgear.mem.bridge import sync_session_to_observations
-from devgear.mem.chunker import build_chunk_from_tool_use
-from devgear.mem.compaction import (
-    detect_low_quality,
-    find_near_duplicates,
-    optimize_db,
-)
-from devgear.mem.context import build_context
-from devgear.mem.database import Database, InteractionLog, MemoryChunk, ProjectProfile, Session
 from devgear.mem.logger import get as _get_logger
-from devgear.mem.search import SearchResult, SearchService, should_inject_memory
 from devgear.mem.settings import Settings
 
+if TYPE_CHECKING:
+    from devgear.mem.database import Database, MemoryChunk
+    from devgear.mem.search import SearchResult
+
 log = _get_logger("CLI")
+
+# SessionStart フックで JSON 出力が必須なコマンドの集合。
+# main() のフォールバック保証とエラー時の早期 return に使用する。
+_SESSION_START_COMMANDS: frozenset[str] = frozenset(
+    {"setup", "context", "record-project-profile", "team-context"}
+)
 
 
 @contextmanager
 def _open_db(settings: Settings):
+    from devgear.mem.database import Database
+
     db = Database(settings.db_path)
     try:
         yield db
@@ -46,23 +50,12 @@ def embed(texts: list[str], model_name: str) -> list[list[float]]:
     return _embed(texts, model_name)
 
 
-def _emit_session_start_output(additional_context: str = "") -> None:
-    """SessionStart 用の hookSpecificOutput を出力する。"""
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "SessionStart",
-                    "additionalContext": additional_context,
-                }
-            },
-            ensure_ascii=False,
-        )
-    )
-
-
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
+        command = sys.argv[1] if len(sys.argv) >= 2 else ""
+        if command in _SESSION_START_COMMANDS:
+            _emit_session_start_output()
+            sys.exit(0)
         print(HELP_TEXT)
         sys.exit(0)
 
@@ -75,6 +68,8 @@ def main() -> None:
         _logger_mod.setup(settings.log_dir, settings.log_level)
     except Exception as e:
         print(f"設定/ログ初期化失敗: {e}", file=sys.stderr)
+        if command in _SESSION_START_COMMANDS:
+            _emit_session_start_output()
         sys.exit(0)
 
     stdin_data: dict = {}
@@ -88,14 +83,25 @@ def main() -> None:
         except (json.JSONDecodeError, OSError) as e:
             log.warning("stdin 読み取り失敗: %s", e)
 
+    is_session_start = command in _SESSION_START_COMMANDS
+    _session_start_output_done = False
+
+    def _ensure_session_start_output() -> None:
+        nonlocal _session_start_output_done
+        if is_session_start and not _session_start_output_done:
+            _emit_session_start_output()
+            _session_start_output_done = True
+
     try:
         match command:
             case "init":
                 _handle_init(settings)
             case "setup":
                 _handle_setup(settings)
+                _session_start_output_done = True
             case "context":
                 _handle_context(settings, stdin_data)
+                _session_start_output_done = True
             case "search":
                 _handle_search(settings, stdin_data)
             case "session-init":
@@ -122,20 +128,23 @@ def main() -> None:
                 _handle_record_interaction(settings, stdin_data)
             case "record-project-profile":
                 _handle_record_project_profile(settings, stdin_data)
+                _session_start_output_done = True
             case "get-project-profile":
                 _handle_get_project_profile(settings, stdin_data)
             case "record-item-run":
                 _handle_record_item_run(settings, stdin_data)
             case "team-context":
                 _handle_team_context(settings, stdin_data)
+                _session_start_output_done = True
             case "team-session-init":
                 _handle_team_session_init(settings, stdin_data)
             case _:
                 log.error("不明なコマンド: %s", command)
-                sys.exit(1)
+                sys.exit(0)
     except Exception as e:
         log.error("コマンド %s 失敗: %s", command, e)
-        sys.exit(0)
+    finally:
+        _ensure_session_start_output()
 
 
 # --- コマンドハンドラ ---
@@ -187,6 +196,8 @@ def _remove_db_artifacts(db_path: Path) -> None:
 
 def _handle_context(settings: Settings, stdin_data: dict) -> None:
     """SessionStart: コンテキスト注入"""
+    from devgear.mem.context import build_context
+
     project = _get_project(stdin_data)
     ctx = ""
     try:
@@ -200,6 +211,8 @@ def _handle_context(settings: Settings, stdin_data: dict) -> None:
 
 def _handle_search(settings: Settings, stdin_data: dict) -> None:
     """mem 検索結果を JSON で返す"""
+    from devgear.mem.search import SearchService
+
     query = str(stdin_data.get("query", "") or "")
     if not query.strip():
         print(json.dumps({"results": []}))
@@ -220,6 +233,9 @@ def _handle_search(settings: Settings, stdin_data: dict) -> None:
 
 def _handle_session_init(settings: Settings, stdin_data: dict) -> None:
     """UserPromptSubmit: セッション初期化 + 適応的検索注入"""
+    from devgear.mem.database import Session
+    from devgear.mem.search import SearchService, should_inject_memory
+
     session_id = str(stdin_data.get("session_id", "") or "")
     project = _get_project(stdin_data)
     prompt = str(stdin_data.get("prompt", "") or "")
@@ -274,6 +290,8 @@ def _handle_session_init(settings: Settings, stdin_data: dict) -> None:
 
 def _handle_observe(settings: Settings, stdin_data: dict) -> None:
     """PostToolUse: ツール使用をチャンクとして保存"""
+    from devgear.mem.chunker import build_chunk_from_tool_use
+
     session_id = str(stdin_data.get("session_id", "") or "")
     project = _get_project(stdin_data)
     tool_name = str(stdin_data.get("tool_name", "") or "")
@@ -302,6 +320,9 @@ def _handle_observe(settings: Settings, stdin_data: dict) -> None:
 
 def _handle_session_end(settings: Settings, stdin_data: dict) -> None:
     """SessionEnd: 埋め込み一括生成 + FTS5 最適化"""
+    from devgear.mem.bridge import sync_session_to_observations
+    from devgear.mem.compaction import detect_low_quality, find_near_duplicates, optimize_db
+
     session_id = str(stdin_data.get("session_id", "") or "")
 
     try:
@@ -357,6 +378,8 @@ def _handle_session_end(settings: Settings, stdin_data: dict) -> None:
 
 def _handle_compact(settings: Settings) -> None:
     """メモリ圧縮コマンド（既定で実行）"""
+    from devgear.mem.compaction import detect_low_quality, find_near_duplicates, optimize_db
+
     try:
         with _open_db(settings) as db:
             low_quality_ids = detect_low_quality(db)
@@ -381,6 +404,8 @@ def _handle_compact(settings: Settings) -> None:
 
 def _handle_search_structured(settings: Settings, stdin_data: dict) -> None:
     """構造化検索: tool_name, files, date_range フィルタをサポート"""
+    from devgear.mem.search import SearchService
+
     query = str(stdin_data.get("query", "") or "")
     project = stdin_data.get("project") or _get_project(stdin_data)
     limit = _coerce_int(stdin_data.get("limit"), default=20)
@@ -475,6 +500,8 @@ def _parse_date_to_epoch(value: int | str | None) -> int | None:
 
 def _handle_record(settings: Settings, stdin_data: dict) -> None:
     """明示的記録: コマンド/スキル/エージェントからの直接記録"""
+    from devgear.mem.database import MemoryChunk, Session
+
     session_id = str(stdin_data.get("session_id", "") or f"record-{int(time.time())}")
     project = _get_project(stdin_data)
     event_type = str(stdin_data.get("event_type", "custom") or "custom")
@@ -1095,6 +1122,8 @@ def _handle_record_interaction(settings: Settings, stdin_data: dict) -> None:
       execution_outcome: str - 'success'|'partial'|'failure'|'unknown'
       tool_error_count: int
     """
+    from devgear.mem.database import InteractionLog, Session
+
     session_id = str(stdin_data.get("session_id", "") or "")
     project = _get_project(stdin_data)
     user_prompt_full = str(stdin_data.get("user_prompt_full", "") or "")
@@ -1146,6 +1175,8 @@ def _handle_record_project_profile(settings: Settings, stdin_data: dict) -> None
       build_command: str
       scope_hint: str - 'global'|'project'
     """
+    from devgear.mem.database import ProjectProfile
+
     project = stdin_data.get("project") or _get_project(stdin_data)
     now = int(time.time())
 
@@ -1323,6 +1354,8 @@ def _handle_team_session_init(settings: Settings, stdin_data: dict) -> None:
     ``should_inject_memory`` ゲートで発火頻度を抑制し、埋め込みモデルのロードは
     実際に必要になった瞬間だけ発生させる。PG 未設定・接続失敗・空結果時は何も出力しない。
     """
+    from devgear.mem.search import should_inject_memory
+
     sync_cfg = settings.sync
     if not settings.team.enabled or not sync_cfg.enabled or not sync_cfg.postgres_url:
         return

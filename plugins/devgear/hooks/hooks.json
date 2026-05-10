@@ -95,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.mem.cli setup",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:setup\" \"devgear.mem.cli setup\" \"minimal,standard,strict\"",
             "timeout": 120
           }
         ],
