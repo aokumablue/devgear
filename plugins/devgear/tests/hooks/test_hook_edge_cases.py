@@ -117,6 +117,26 @@ def test_run_with_flags_returns_child_stdout_when_hook_enabled(monkeypatch: pyte
     assert stdout == ["child-out"]
 
 
+def test_run_with_flags_emits_session_start_fallback_json_when_child_stdout_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stdout: list[str] = []
+    monkeypatch.setattr(run_with_flags.sys, "argv", ["launcher.py", "session:start", "target"])
+    monkeypatch.setattr(run_with_flags, "read_raw_stdin_with_truncation", lambda max_bytes=0: ("payload", False))
+    monkeypatch.setattr(run_with_flags, "is_hook_enabled", lambda hook_id, profiles=None: True)
+    monkeypatch.setattr(
+        run_with_flags.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(run_with_flags, "write_stdout", stdout.append)
+
+    assert run_with_flags.main() == 0
+    payload = json.loads(stdout[0])
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+
+
 def test_run_with_flags_skips_disabled_hook(monkeypatch: pytest.MonkeyPatch) -> None:
     import io
 

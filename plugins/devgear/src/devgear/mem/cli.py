@@ -40,6 +40,21 @@ def _open_db(settings: Settings):
         db.close()
 
 
+def _emit_session_start_output(additional_context: str = "") -> None:
+    """SessionStart 用の hookSpecificOutput を出力する。"""
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": additional_context,
+                }
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
         print(HELP_TEXT)
@@ -122,8 +137,13 @@ def main() -> None:
 
 def _handle_setup(settings: Settings) -> None:
     """Setup: データディレクトリとDB初期化"""
-    _initialize_db(settings)
-    log.info("セットアップ完了: %s", settings.data_path)
+    try:
+        _initialize_db(settings)
+        log.info("セットアップ完了: %s", settings.data_path)
+    except Exception as e:
+        log.warning("setup 失敗: %s", e)
+    finally:
+        _emit_session_start_output()
 
 
 def _handle_init(settings: Settings) -> None:
@@ -162,20 +182,14 @@ def _remove_db_artifacts(db_path: Path) -> None:
 def _handle_context(settings: Settings, stdin_data: dict) -> None:
     """SessionStart: コンテキスト注入"""
     project = _get_project(stdin_data)
+    ctx = ""
     try:
         with _open_db(settings) as db:
             ctx = build_context(db, settings, project=project)
-        if ctx:
-            print(
-                json.dumps(
-                    {
-                        "hookEventName": "SessionStart",
-                        "additionalContext": ctx,
-                    }
-                )
-            )
     except Exception as e:
         log.warning("コンテキスト生成失敗: %s", e)
+    finally:
+        _emit_session_start_output(ctx)
 
 
 def _handle_search(settings: Settings, stdin_data: dict) -> None:
@@ -1145,10 +1159,11 @@ def _handle_record_project_profile(settings: Settings, stdin_data: dict) -> None
                 scope_hint=str(stdin_data.get("scope_hint", "project") or "project"),
             )
             profile_id = db.upsert_project_profile(profile)
-        print(json.dumps({"success": True, "id": profile_id}))
+        log.info("project profile saved: %s (id=%s)", project, profile_id)
     except Exception as e:
         log.warning("プロジェクトプロファイル保存失敗: %s", e)
-        print(json.dumps({"success": False, "error": str(e)}))
+    finally:
+        _emit_session_start_output()
 
 
 def _handle_get_project_profile(settings: Settings, stdin_data: dict) -> None:
@@ -1248,16 +1263,20 @@ def _handle_team_context(settings: Settings, stdin_data: dict) -> None:
     """SessionStart: PostgreSQL チーム共有チャンクから ``<team-context>`` を注入。
 
     FTS のみの軽量クエリで、起動時のレイテンシを最小化する。接続失敗やデータ不在時は
-    静かにスキップする（stdout 空 / exit 0）。
+    静かにスキップするが、SessionStart の出力契約は満たす。
     """
     sync_cfg = settings.sync
+    ctx = ""
     if not settings.team.enabled or not sync_cfg.enabled or not sync_cfg.postgres_url:
+        _emit_session_start_output()
         return
 
     project = _get_project(stdin_data)
     if not project:
+        _emit_session_start_output()
         return
     if project in settings.excluded_projects:
+        _emit_session_start_output()
         return
 
     git_user = get_git_user_name()
@@ -1267,10 +1286,12 @@ def _handle_team_context(settings: Settings, stdin_data: dict) -> None:
         from devgear.mem.team_context import build_team_context
     except Exception as e:
         log.warning("team-context モジュール読み込み失敗: %s", e)
+        _emit_session_start_output()
         return
 
-    pg = PgDatabase(sync_cfg.postgres_url)
+    pg = None
     try:
+        pg = PgDatabase(sync_cfg.postgres_url)
         if not pg.test_connection():
             log.warning("team-context: PostgreSQL 接続失敗")
             return
@@ -1282,19 +1303,12 @@ def _handle_team_context(settings: Settings, stdin_data: dict) -> None:
             settings=settings.team,
             mode="fts",
         )
-        if ctx:
-            print(
-                json.dumps(
-                    {
-                        "hookEventName": "SessionStart",
-                        "additionalContext": ctx,
-                    }
-                )
-            )
     except Exception as e:
         log.warning("team-context 生成失敗: %s", e)
     finally:
-        pg.close()
+        if pg is not None:
+            pg.close()
+        _emit_session_start_output(ctx)
 
 
 def _handle_team_session_init(settings: Settings, stdin_data: dict) -> None:

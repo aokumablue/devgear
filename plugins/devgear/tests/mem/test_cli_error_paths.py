@@ -215,7 +215,9 @@ def test_record_and_profile_and_item_run_handlers(
             "scope_hint": "project",
         },
     )
-    assert json.loads(capsys.readouterr().out)["success"] is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert payload["hookSpecificOutput"]["additionalContext"] == ""
     assert db.project_profiles["repo"].languages == ["python"]
 
     cli._handle_get_project_profile(settings, {"project": "repo"})

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -21,6 +22,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # 設定ファイル保護は truncated payload を見逃すとバイパスに悪用されうるため、
 # run_with_flags 側でブロックする。
 _TRUNCATION_GUARD_HOOK_IDS = frozenset({"pre:config-protection"})
+_SESSION_START_HOOK_IDS = frozenset(
+    {
+        "session:start",
+        "session:mem:context",
+        "session:mem:record-project-profile",
+    }
+)
 
 
 def read_raw_stdin_with_truncation(max_bytes: int = MAX_STDIN_BYTES) -> tuple[str, bool]:
@@ -79,6 +87,18 @@ def _truncation_blocked_message(hook_id: str, max_bytes: int) -> str:
         f"BLOCKED: Hook input exceeded {max_bytes} bytes for {hook_id}. "
         "Refusing to bypass protection on a truncated payload. "
         "Retry with a smaller edit."
+    )
+
+
+def _session_start_fallback_output() -> str:
+    """SessionStart の最低限の JSON 出力を返す。"""
+    return json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "",
+            }
+        }
     )
 
 
@@ -177,6 +197,8 @@ def main() -> int:
 
     if result.stdout:
         write_stdout(result.stdout)
+    elif hook_id in _SESSION_START_HOOK_IDS:
+        write_stdout(_session_start_fallback_output())
     else:
         write_stdout(raw)
 

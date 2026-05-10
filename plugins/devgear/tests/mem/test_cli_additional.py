@@ -222,6 +222,35 @@ def test_handle_setup_and_observe_branches(monkeypatch: pytest.MonkeyPatch, tmp_
     assert db.stored_chunks
 
 
+def test_handle_session_start_commands_emit_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = make_settings(tmp_path)
+    db = FakeDB()
+
+    monkeypatch.setattr(cli, "_open_db", lambda current_settings: open_fake_db(db))
+
+    cli._handle_setup(settings)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+
+    cli._handle_record_project_profile(
+        settings,
+        {
+            "project": "repo",
+            "project_path": str(tmp_path),
+            "languages": ["python"],
+            "frameworks": ["pytest"],
+            "primary_language": "python",
+            "scope_hint": "project",
+        },
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+
+
 def test_sync_import_and_dashboard_helpers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     settings = make_settings(tmp_path)
 
@@ -269,7 +298,9 @@ def test_handle_context_and_search_error_paths(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setattr(cli, "_open_db", lambda settings: (_ for _ in ()).throw(RuntimeError("ctx boom")))
     cli._handle_context(settings, {"cwd": str(tmp_path)})
     assert any("コンテキスト生成失敗" in warning for warning in warnings)
-    assert capsys.readouterr().out == ""
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert payload["hookSpecificOutput"]["additionalContext"] == ""
 
     cli._handle_search(settings, {"query": "   "})
     assert json.loads(capsys.readouterr().out) == {"results": []}

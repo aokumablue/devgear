@@ -61,9 +61,9 @@ def test_context_command_uses_local_db(monkeypatch, tmp_path: Path) -> None:
     stdout, stderr = _run_cli(monkeypatch, tmp_path, ["context"], {"cwd": str(repo_dir)})
     assert stderr == ""
     payload = json.loads(stdout)
-    assert payload["hookEventName"] == "SessionStart"
-    assert "<mem-context>" in payload["additionalContext"]
-    assert "did some work" in payload["additionalContext"]
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert "<mem-context>" in payload["hookSpecificOutput"]["additionalContext"]
+    assert "did some work" in payload["hookSpecificOutput"]["additionalContext"]
 
 
 def test_search_command_returns_results(monkeypatch, tmp_path: Path) -> None:
@@ -333,12 +333,12 @@ def test_record_command_requires_content(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_mem_main_module_invokes_cli_main(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[bool] = []
-    monkeypatch.setattr(cli, "main", lambda: calls.append(True) or 0)
+    monkeypatch.setattr(sys, "argv", ["python", "--help"])
 
-    runpy.run_module("devgear.mem.__main__", run_name="__main__")
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_module("devgear.mem.__main__", run_name="__main__")
 
-    assert calls == [True]
+    assert excinfo.value.code == 0
 
 
 # -----------------------------------------------------------------------
