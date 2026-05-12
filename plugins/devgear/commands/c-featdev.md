@@ -53,6 +53,6 @@ command: /c-featdev
 ## 永続メモリ
 
 `<mem-context>` 注入で起動。
-search: `featdev workflow {feature}` / `phase blocker feature`
-record: `{"event_type": "featdev", "content": "Feature: {name}. Phases: {done}/7. Files: {n}. Tests: {n}"}`
+search: `feature-dev workflow {feature}` / `phase blocker feature`
+record: `{"event_type": "feature-dev", "content": "Feature: {name}. Phases: {done}/7. Files: {n}. Tests: {n}"}`
 参照: 過去機能開発履歴 / フェーズ別詰まり / 再利用パターン
