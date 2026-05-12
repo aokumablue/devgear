@@ -95,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:setup\" \"devgear.mem.cli setup\" \"minimal,standard,strict\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:setup\" \"devgear.mem.cli\" \"minimal,standard,strict\" setup",
             "timeout": 120
           }
         ],
@@ -116,7 +116,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:record-project-profile\" \"devgear.mem.cli record-project-profile\" \"standard,strict\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:record-project-profile\" \"devgear.mem.cli\" \"standard,strict\" record-project-profile",
             "timeout": 15
           }
         ],
@@ -127,7 +127,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:context\" \"devgear.mem.cli context\" \"strict\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:context\" \"devgear.mem.cli\" \"strict\" context",
             "timeout": 60
           }
         ],
@@ -140,7 +140,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:mem:session-init\" \"devgear.mem.cli session-init\" \"standard,strict\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:mem:session-init\" \"devgear.mem.cli\" \"standard,strict\" \"session-init\"",
             "timeout": 30
           }
         ],
@@ -151,7 +151,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:team:session-init\" \"devgear.mem.cli team-session-init\" \"standard,strict\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:team:session-init\" \"devgear.mem.cli\" \"standard,strict\" \"team-session-init\"",
             "timeout": 30
           }
         ],
@@ -162,7 +162,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:mem:record-interaction\" \"devgear.mem.cli record-interaction\" \"standard,strict\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:mem:record-interaction\" \"devgear.mem.cli\" \"standard,strict\" \"record-interaction\"",
             "timeout": 30
           }
         ],
@@ -173,7 +173,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:mem:sync-check\" \"devgear.mem.cli sync-check\" \"standard,strict\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"user:mem:sync-check\" \"devgear.mem.cli\" \"standard,strict\" \"sync-check\"",
             "async": true,
             "timeout": 600
           }
@@ -284,7 +284,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:end\" \"devgear.mem.cli session-end\" \"standard,strict\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:end\" \"devgear.mem.cli\" \"standard,strict\" \"session-end\"",
             "async": true,
             "timeout": 120
           }
@@ -296,7 +296,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:sync-check\" \"devgear.mem.cli sync-check\" \"standard,strict\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.run_with_flags \"session:mem:sync-check\" \"devgear.mem.cli\" \"standard,strict\" \"sync-check\"",
             "async": false,
             "timeout": 600
           }

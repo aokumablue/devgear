@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from devgear.hooks.doc_file_warning import is_suspicious_doc_path
 from devgear.hooks.run_with_flags import resolve_target_command
 
@@ -88,6 +90,121 @@ def test_run_with_flags_propagates_blocked_hook() -> None:
     assert result.returncode == 2
     assert result.stdout == payload
     assert "git hook bypass flags are not allowed" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("args", "input_text"),
+    [
+        (("devgear.hooks.run_with_flags", "session:mem:setup", "devgear.mem.cli", "minimal,standard,strict", "setup"), "{}"),
+        (
+            (
+                "devgear.hooks.run_with_flags",
+                "session:mem:context",
+                "devgear.mem.cli",
+                "strict",
+                "context",
+            ),
+            json.dumps({"cwd": str(REPO_ROOT)}),
+        ),
+        (
+            (
+                "devgear.hooks.run_with_flags",
+                "session:mem:record-project-profile",
+                "devgear.mem.cli",
+                "standard,strict",
+                "record-project-profile",
+            ),
+            json.dumps({"cwd": str(REPO_ROOT), "languages": ["python"], "frameworks": ["pytest"]}),
+        ),
+    ],
+)
+def test_session_start_mem_hooks_use_separate_target_args(
+    args: tuple[str, ...], input_text: str
+) -> None:
+    result = run_launcher(*args, input_text=input_text)
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert "No module named" not in result.stderr
+    assert "不明なコマンド" not in result.stderr
+    if args[1] == "session:mem:setup":
+        assert "コマンド setup 失敗" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("args", "input_text"),
+    [
+        (
+            (
+                "devgear.hooks.run_with_flags",
+                "user:mem:session-init",
+                "devgear.mem.cli",
+                "standard,strict",
+                "session-init",
+            ),
+            json.dumps({"cwd": str(REPO_ROOT), "session_id": "s-user-init", "prompt": "hello"}),
+        ),
+        (
+            (
+                "devgear.hooks.run_with_flags",
+                "user:team:session-init",
+                "devgear.mem.cli",
+                "standard,strict",
+                "team-session-init",
+            ),
+            json.dumps({"cwd": str(REPO_ROOT), "prompt": "hello"}),
+        ),
+        (
+            (
+                "devgear.hooks.run_with_flags",
+                "user:mem:record-interaction",
+                "devgear.mem.cli",
+                "standard,strict",
+                "record-interaction",
+            ),
+            json.dumps({"cwd": str(REPO_ROOT), "user_prompt_full": "hello"}),
+        ),
+        (
+            (
+                "devgear.hooks.run_with_flags",
+                "user:mem:sync-check",
+                "devgear.mem.cli",
+                "standard,strict",
+                "sync-check",
+            ),
+            "{}",
+        ),
+        (
+            (
+                "devgear.hooks.run_with_flags",
+                "session:mem:end",
+                "devgear.mem.cli",
+                "standard,strict",
+                "session-end",
+            ),
+            json.dumps({"session_id": "s-session-end"}),
+        ),
+        (
+            (
+                "devgear.hooks.run_with_flags",
+                "session:mem:sync-check",
+                "devgear.mem.cli",
+                "standard,strict",
+                "sync-check",
+            ),
+            "{}",
+        ),
+    ],
+)
+def test_mem_cli_hooks_use_separate_target_args(
+    args: tuple[str, ...], input_text: str
+) -> None:
+    result = run_launcher(*args, input_text=input_text)
+
+    assert result.returncode == 0
+    assert "No module named" not in result.stderr
+    assert "不明なコマンド" not in result.stderr
 
 
 def test_resolve_target_command_module_name() -> None:

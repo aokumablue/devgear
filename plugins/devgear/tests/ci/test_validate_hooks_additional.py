@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import runpy
+import shlex
 import sys
 from pathlib import Path
 
@@ -165,18 +166,32 @@ def test_validate_hooks_reports_invalid_matcher_and_entrypoint(
     assert excinfo.value.code == 0
 
 
-def test_repo_sync_check_hook_runs_synchronously() -> None:
+def test_repo_mem_cli_hooks_split_target_and_args() -> None:
     repo_root = Path(__file__).resolve().parents[4]
     hooks_file = repo_root / "plugins/devgear/hooks/hooks.json"
     hooks = json.loads(hooks_file.read_text(encoding="utf-8"))
-    user_prompt_hooks = hooks["hooks"]["UserPromptSubmit"]
+    commands = [
+        hook.get("command", "")
+        for event_hooks in hooks["hooks"].values()
+        for matcher in event_hooks
+        for hook in matcher.get("hooks", [])
+        if hook.get("type") == "command" and "devgear.hooks.run_with_flags" in hook.get("command", "")
+    ]
 
-    sync_check_entry = next(
-        hook
-        for matcher in user_prompt_hooks
-        for hook in matcher["hooks"]
-        if "devgear.mem.cli sync-check" in hook.get("command", "")
-    )
-
-    assert sync_check_entry["async"] is True
-    assert sync_check_entry["timeout"] == 600
+    mem_cli_commands = [command for command in commands if "\"devgear.mem.cli\"" in command]
+    assert mem_cli_commands
+    for command in mem_cli_commands:
+        parts = shlex.split(command)
+        assert parts[4] == "devgear.mem.cli"
+        assert " " not in parts[4]
+        assert parts[5]
+        assert parts[6] in {
+            "setup",
+            "context",
+            "record-project-profile",
+            "session-init",
+            "team-session-init",
+            "record-interaction",
+            "sync-check",
+            "session-end",
+        }

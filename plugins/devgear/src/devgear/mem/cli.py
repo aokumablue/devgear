@@ -450,7 +450,7 @@ def _handle_team_session_init(settings: Settings, stdin_data: dict) -> None:
 
 _COMMAND_HANDLERS: dict[str, _CommandHandler] = {
     "init": lambda settings, stdin_data: (_handle_init(settings) or None),
-    "setup": _handle_setup,
+    "setup": lambda settings, stdin_data: (_handle_setup(settings) or None),
     "context": _handle_context,
     "search": _handle_search,
     "session-init": _handle_session_init,
