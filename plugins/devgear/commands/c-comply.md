@@ -15,6 +15,10 @@ skills・rules・agent 定義が実際に守られているかを次の方法で
 5. 時系列の順序を決定論的に検証
 6. spec・プロンプト・タイムライン含む自己完結型レポートを生成
 
+## s-grillme 強制起動（必須）
+
+開始直後に s-grillme を必ず起動し、完了まで他の処理に進まない。
+
 ## 対応対象
 
 - **Skills** (`skills/*/SKILL.md`): s-search・s-tddなどのワークフローskill

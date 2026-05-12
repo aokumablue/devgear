@@ -6,6 +6,10 @@ command: /c-simplify
 
 # 並列コード単純化
 
+## s-grillme 強制起動（必須）
+
+開始直後に s-grillme を必ず起動し、完了まで他の処理に進まない。
+
 ## 永続メモリ
 
 search: `simplify refactor clean {対象ファイルパス}`
@@ -25,6 +29,7 @@ record: `{"event_type": "simplify", "content": "Simplified: {files}. Issues reso
 対象ファイルを最大4グループに分割（ファイル数が少ない場合は1グループ/ファイル）。
 
 グループ分けの基準:
+
 - 同一モジュール・ディレクトリは同じグループにまとめる
 - テストファイルと実装ファイルは同じグループにする
 - 1グループ最大5ファイル
@@ -34,6 +39,7 @@ record: `{"event_type": "simplify", "content": "Simplified: {files}. Issues reso
 各グループに対して `devgear:a-simplify` エージェントをサブエージェントとして**同時起動**する。
 
 各サブエージェントへの指示テンプレート:
+
 ```
 以下のファイルを単純化してください。機能を完全に保持し、明確性・一貫性・保守性を向上させてください。
 

@@ -1,6 +1,7 @@
 ---
-name: s-featdev
+name: c-featdev
 description: 新機能開発の7段階ワークフロー統括。発見→探索→質問→設計→実装→レビュー→サマリー。a-explore/a-arch/a-tdd/a-review 連携で一気通貫。新機能実装・機能拡張・中規模リファクタリング時に使用。
+command: /c-featdev
 ---
 
 # 機能開発フロー
@@ -23,10 +24,6 @@ description: 新機能開発の7段階ワークフロー統括。発見→探索
    - `a-review` サブエージェントA: 品質・設計・保守性レビュー
    - `a-secure` サブエージェントB: セキュリティ・脆弱性レビュー
 7. **サマリー** — 変更ファイル/追加テスト/残課題 一覧化
-
-## 発動タイミング
-
-新機能実装・機能拡張・中規模リファクタリング。バグ修正単発は不要。
 
 ## 段階飛ばし禁止
 
@@ -56,6 +53,6 @@ description: 新機能開発の7段階ワークフロー統括。発見→探索
 ## 永続メモリ
 
 `<mem-context>` 注入で起動。
-search: `feature-dev workflow {feature}` / `phase blocker feature`
-record: `{"event_type": "feature-dev", "content": "Feature: {name}. Phases: {done}/7. Files: {n}. Tests: {n}"}`
+search: `featdev workflow {feature}` / `phase blocker feature`
+record: `{"event_type": "featdev", "content": "Feature: {name}. Phases: {done}/7. Files: {n}. Tests: {n}"}`
 参照: 過去機能開発履歴 / フェーズ別詰まり / 再利用パターン

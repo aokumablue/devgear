@@ -8,6 +8,10 @@ command: /c-stocktake
 
 skills と commands を品質チェックリストとAIによる総合判断で監査する。
 
+## s-grillme 強制起動（必須）
+
+開始直後に s-grillme を必ず起動し、完了まで他の処理に進まない。
+
 ## 実装
 
 ```bash
@@ -33,12 +37,15 @@ RESULTS_JSON="${DEVGEAR_DIR:-$HOME/.devgear}/stocktake/results.json"
 
 1. `$RESULTS_JSON` を確認する
 2. 以下を実行して変更済みスキルを検出する:
+
    ```bash
    devgear_run devgear.skills.stocktake.cli diff "$RESULTS_JSON"
    ```
+
 3. 出力が `[]` → 「変更なし」と報告して終了
 4. 変更ファイルのみ同じ基準で再評価し、未変更は前回結果を引き継ぐ
 5. 評価結果を保存する:
+
    ```bash
    devgear_run devgear.skills.stocktake.cli save "$RESULTS_JSON" <<< "$EVAL_RESULTS"
    ```
@@ -66,12 +73,14 @@ Agent(subagent_type="general-purpose", prompt="
 ```
 
 **チェックリスト:**
+
 - [ ] 他のskillとの内容の重複確認
 - [ ] MEMORY.md / CLAUDE.md との重複確認
 - [ ] 技術参照の鮮度確認（WebSearch使用）
 - [ ] 利用頻度を考慮
 
 **判定基準:**
+
 - Keep: 有用で現行のまま使える
 - Improve: 残す価値はあるが具体的な改善が必要
 - Update: 技術参照が古い

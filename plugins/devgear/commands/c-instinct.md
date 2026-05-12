@@ -8,6 +8,10 @@ command: /c-instinct
 
 学習済みインスティンクトの管理・昇格・削除を扱う。状態確認は `c-dashboard` に集約する。
 
+## s-grillme 強制起動（必須）
+
+開始直後に s-grillme を必ず起動し、完了まで他の処理に進まない。
+
 ## 実装
 
 ```bash
@@ -61,6 +65,7 @@ devgear_run devgear.skills.learn.cli <subcommand>
 ```
 
 **実施内容:**
+
 1. 現在のプロジェクトコンテキスト検出
 2. project / global のインスティンクト読む（ID衝突時はproject優先）
 3. トリガー/ドメインパターンごとに分類
@@ -69,11 +74,13 @@ devgear_run devgear.skills.learn.cli <subcommand>
 6. `evolved/{skills,commands,agents}/` 配下にファイル生成
 
 **進化ルール（3分類）:**
+
 - **Command** — ユーザーが明示的に呼び出す操作・繰り返し可能な手順・ユーザー入力が不可欠
 - **Skill** — 自動発火する振る舞い・パターンマッチ型トリガー・背後で隠れた効率化
 - **Agent** — 複雑な多段階処理・複数の独立した検証が必要・分離の恩恵が大きい
 
 **生成ファイルフロントマター形式:**
+
 ```yaml
 ---
 name: {name}

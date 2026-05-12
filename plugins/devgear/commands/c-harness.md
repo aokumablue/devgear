@@ -8,6 +8,10 @@ command: /c-harness
 
 ハーネスの監査と最適化をワンショットで実行する。
 
+## s-grillme 強制起動（必須）
+
+開始直後に s-grillme を必ず起動し、完了まで他の処理に進まない。
+
 ## 永続メモリ
 
 `<mem-context>` 注入で起動。
@@ -49,6 +53,7 @@ devgear_run devgear.ci.harness_audit <scope> --format <text|json> [--root <path>
 ルーブリック版: `2026-03-30`
 
 固定カテゴリ7個（各0〜10に正規化）:
+
 1. ツール網羅性
 2. 文脈効率
 3. 品質ゲート

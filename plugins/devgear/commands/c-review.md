@@ -6,6 +6,10 @@ command: /c-review
 
 # コードレビュー
 
+## s-grillme 強制起動（必須）
+
+開始直後に s-grillme を必ず起動し、完了まで他の処理に進まない。
+
 ## 永続メモリ
 
 search: `review violation security` / `{変更ファイル名}` (file_pattern指定)

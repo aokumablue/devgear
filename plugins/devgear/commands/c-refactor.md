@@ -6,6 +6,10 @@ command: /c-refactor
 
 # 統合リファクタリング
 
+## s-grillme 強制起動（必須）
+
+開始直後に s-grillme を必ず起動し、完了まで他の処理に進まない。
+
 ## 永続メモリ
 
 search: `refactor clean simplify perf review {対象ファイルパス}` / `critical high blocker`

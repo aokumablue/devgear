@@ -8,6 +8,10 @@ command: /c-dashboard
 
 個人データ（SQLite）常時収集・PostgreSQL設定時はチームデータも収集→個人 vs チーム比較表示の静的HTMLダッシュボード生成。スキル健全性・成長候補・プロジェクト登録もここに集約する。
 
+## s-grillme 強制起動（必須）
+
+開始直後に s-grillme を必ず起動し、完了まで他の処理に進まない。
+
 ## 前提条件
 
 - ローカルSQLite（`~/.devgear/mem.db`）初期化済み

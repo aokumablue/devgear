@@ -8,6 +8,10 @@ command: /c-skillgen
 
 リポジトリ固有入力を集めて整理し、SKILL.md生成はs-skillmakeに、生成後の改善はs-skilltuneに委譲。
 
+## s-grillme 強制起動（必須）
+
+開始直後に s-grillme を必ず起動し、完了まで他の処理に進まない。
+
 ## 使い方
 
 ```bash
