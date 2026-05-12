@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from devgear.hooks.hook_common import emit_session_start_output, read_raw_stdin
@@ -27,8 +28,10 @@ from devgear.lib.core_utils import (
 )
 from devgear.lib.package_manager import get_package_manager, get_selection_prompt
 from devgear.lib.project_detect import detect_project
+from devgear.lib.sanitize import sanitize_log_value
 from devgear.lib.settings import extract_coverage_hint_lines
 from devgear.lib.slim_text import compact_line
+from devgear.lib.subprocess_utils import check_output_text
 from devgear.mem.settings import Settings
 
 _SLIM_SKILL_PATH = Path(__file__).parents[4] / "skills" / "s-slim" / "SKILL.md"
@@ -41,6 +44,11 @@ _SUMMARY_PATTERN = re.compile(
 )
 _SECTION_PATTERN = re.compile(r"(### .+?\n.*?)(?=\n### |\Z)", re.DOTALL)
 _KEEP_SECTIONS = {"### Tasks", "### Files Modified"}
+
+
+def _log_sanitized_exception(prefix: str, exc: BaseException) -> None:
+    """例外をサニタイズして単一行ログとして出力する。"""
+    log(f"{prefix}: {sanitize_log_value(str(exc))}")
 
 
 def _filter_session_summary(content: str, max_length: int = 2000) -> str:
@@ -80,34 +88,29 @@ def _filter_session_summary(content: str, max_length: int = 2000) -> str:
 
 def _get_git_info() -> dict:
     """現在ディレクトリの git 状態を取得する。失敗時は空の値を返す。"""
-    import subprocess as _sp
-
     info: dict = {"branch": None, "commit_hash": None, "uncommitted_count": 0}
     try:
-        info["branch"] = _sp.check_output(
+        info["branch"] = check_output_text(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            stderr=_sp.DEVNULL,
             timeout=5,
-        ).decode().strip()
-    except Exception as e:
-        log(f"[SessionStart] git branch lookup failed: {e}")
+        ).strip()
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"[SessionStart] git branch lookup failed: {sanitize_log_value(str(e))}")
     try:
-        info["commit_hash"] = _sp.check_output(
+        info["commit_hash"] = check_output_text(
             ["git", "rev-parse", "--short=12", "HEAD"],
-            stderr=_sp.DEVNULL,
             timeout=5,
-        ).decode().strip()
-    except Exception as e:
-        log(f"[SessionStart] git commit lookup failed: {e}")
+        ).strip()
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"[SessionStart] git commit lookup failed: {sanitize_log_value(str(e))}")
     try:
-        status = _sp.check_output(
+        status = check_output_text(
             ["git", "status", "--porcelain"],
-            stderr=_sp.DEVNULL,
             timeout=5,
-        ).decode()
+        )
         info["uncommitted_count"] = len([line for line in status.splitlines() if line.strip()])
-    except Exception as e:
-        log(f"[SessionStart] git status lookup failed: {e}")
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"[SessionStart] git status lookup failed: {sanitize_log_value(str(e))}")
     return info
 
 
@@ -145,7 +148,12 @@ def _save_project_profile(project_info: object) -> None:
         # git 情報を取得してログ出力（session git info は sessions テーブルへの記録に使う）
         git_info = _get_git_info()
         if git_info["branch"]:
-            log(f"[SessionStart] git branch={git_info['branch']} commit={git_info['commit_hash']} uncommitted={git_info['uncommitted_count']}")
+            log(
+                "[SessionStart] git branch="
+                f"{sanitize_log_value(str(git_info['branch']))} "
+                f"commit={sanitize_log_value(str(git_info['commit_hash']))} "
+                f"uncommitted={git_info['uncommitted_count']}"
+            )
 
         profile = ProjectProfile(
             project=project,
@@ -165,9 +173,12 @@ def _save_project_profile(project_info: object) -> None:
         finally:
             db.close()
 
-        log(f"[SessionStart] Project profile saved: {project} (scope_hint={scope_hint})")
+        log(
+            "[SessionStart] Project profile saved: "
+            f"{sanitize_log_value(project)} (scope_hint={sanitize_log_value(scope_hint)})"
+        )
     except Exception as e:
-        log(f"[SessionStart] Project profile save error: {e}")
+        log(f"[SessionStart] Project profile save error: {sanitize_log_value(str(e))}")
 
 
 def _import_adrs_and_instincts() -> None:
@@ -188,7 +199,7 @@ def _import_adrs_and_instincts() -> None:
             db.close()
         log(f"[SessionStart] mem import: instincts={n_instincts} adrs={n_adrs}")
     except Exception as e:
-        log(f"[SessionStart] mem import error: {e}")
+        log(f"[SessionStart] mem import error: {sanitize_log_value(str(e))}")
 
 
 def dedupe_recent_sessions(search_dirs: list[Path]) -> list[dict]:
@@ -330,7 +341,7 @@ def run(_raw_input: str) -> str:
             skill_content = _SLIM_SKILL_PATH.read_text(encoding="utf-8")
             additional_context_parts.append(skill_content)
     except Exception as e:
-        log(f"[SessionStart] Slim injection error: {e}")
+        _log_sanitized_exception("[SessionStart] Slim injection error", e)
 
     additional_context = "\n\n".join(additional_context_parts)
     return emit_session_start_output(additional_context)
@@ -354,7 +365,7 @@ def main() -> int:
         print(output, end="")
         return 0
     except Exception as err:
-        log(f"[SessionStart] Error: {err}")
+        _log_sanitized_exception("[SessionStart] Error", err)
         print(emit_session_start_output(), end="")
         return 0
 

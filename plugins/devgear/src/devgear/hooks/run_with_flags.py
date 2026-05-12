@@ -14,11 +14,10 @@ from pathlib import Path
 
 from devgear.hooks.hook_common import (
     MAX_STDIN_BYTES,
+    SESSION_START_HOOK_IDS,
+    emit_session_start_output,
     write_stderr,
     write_stdout,
-)
-from devgear.hooks.hook_common import (
-    SESSION_START_HOOK_IDS as _SESSION_START_HOOK_IDS,
 )
 from devgear.lib.hook_flags import is_hook_enabled
 
@@ -42,7 +41,14 @@ def read_raw_stdin_with_truncation(max_bytes: int = MAX_STDIN_BYTES) -> tuple[st
     Raises:
         例外は発生しません。
     """
-    raw_bytes = sys.stdin.buffer.read(max_bytes + 1)
+    stdin_buffer = getattr(sys.stdin, "buffer", None)
+    if stdin_buffer is not None:
+        raw_bytes = stdin_buffer.read(max_bytes + 1)
+    else:
+        # io.StringIO など .buffer を持たない stdin を想定したフォールバック。
+        # バイト上限を大きく超える無制限 read を避けるため、最大 +1 文字だけ読む。
+        raw_text = sys.stdin.read(max_bytes + 1)
+        raw_bytes = raw_text.encode("utf-8", errors="replace")
     truncated = len(raw_bytes) > max_bytes
     if truncated:
         raw_bytes = raw_bytes[:max_bytes]
@@ -59,7 +65,7 @@ def build_env() -> dict[str, str]:
         例外は発生しません。
     """
     env = os.environ.copy()
-    env.setdefault("CLAUDE_PLUGIN_ROOT", str(REPO_ROOT))
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO_ROOT)
 
     pythonpath = env.get("PYTHONPATH")
     paths = [str(REPO_ROOT / "src")]
@@ -88,15 +94,12 @@ def _truncation_blocked_message(hook_id: str, max_bytes: int) -> str:
         "Retry with a smaller edit."
     )
 
-
-def _session_start_fallback_output() -> str:
-    """SessionStart の最低限の JSON 出力を返す。"""
-    from devgear.hooks.hook_common import emit_session_start_output
-
-    return emit_session_start_output()
-
-
-def resolve_target_command(target: str, args: list[str] | None = None) -> list[str]:
+def resolve_target_command(
+    target: str,
+    args: list[str] | None = None,
+    *,
+    plugin_root: Path | None = None,
+) -> list[str]:
     """ターゲット指定から実行コマンドを解決します。
 
     Args:
@@ -110,9 +113,9 @@ def resolve_target_command(target: str, args: list[str] | None = None) -> list[s
         例外は発生しません。
     """
     args = list(args or [])
+    plugin_root = plugin_root or REPO_ROOT
     candidate = Path(target)
     if not candidate.is_absolute():
-        plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", str(REPO_ROOT))).resolve()
         candidate = candidate if candidate.exists() else plugin_root / candidate
         try:
             if candidate.resolve().is_relative_to(plugin_root):
@@ -165,7 +168,12 @@ def main() -> int:
     target_args = sys.argv[4:] if len(sys.argv) > 4 else []
 
     if not is_hook_enabled(hook_id, profiles=profiles_csv):
-        write_stdout(sys.stdin.read())
+        stdin_buffer = getattr(sys.stdin, "buffer", None)
+        if stdin_buffer is not None:
+            raw = stdin_buffer.read().decode("utf-8", errors="replace")
+        else:
+            raw = sys.stdin.read()
+        write_stdout(raw)
         return 0
 
     raw, truncated = read_raw_stdin_with_truncation()
@@ -178,7 +186,7 @@ def main() -> int:
 
     try:
         result = subprocess.run(
-            resolve_target_command(target, target_args),
+            resolve_target_command(target, target_args, plugin_root=REPO_ROOT),
             input=raw,
             text=True,
             capture_output=True,
@@ -191,8 +199,8 @@ def main() -> int:
 
     if result.stdout:
         write_stdout(result.stdout)
-    elif hook_id in _SESSION_START_HOOK_IDS:
-        write_stdout(_session_start_fallback_output())
+    elif hook_id in SESSION_START_HOOK_IDS:
+        write_stdout(emit_session_start_output())
     else:
         write_stdout(raw)
 
@@ -201,7 +209,7 @@ def main() -> int:
 
     # SessionStart 系フックで子が非 0 終了しても "Failed with non-blocking status code" を出さない。
     # stdout には既に上で hookSpecificOutput JSON が書き出されている。
-    if hook_id in _SESSION_START_HOOK_IDS and result.returncode != 0:
+    if hook_id in SESSION_START_HOOK_IDS and result.returncode != 0:
         return 0
     return result.returncode
 

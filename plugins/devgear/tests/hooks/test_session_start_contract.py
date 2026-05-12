@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from devgear.hooks import hook_common, session_install, session_start
-from devgear.hooks.run_with_flags import _session_start_fallback_output
+from devgear.hooks.hook_common import emit_session_start_output
 
 
 def _assert_session_start_json(output: str) -> dict:
@@ -187,12 +187,12 @@ class TestSessionStartHookContract:
 
 class TestRunWithFlagsSessionStartContract:
     def test_fallback_output_is_valid_json(self) -> None:
-        result = _session_start_fallback_output()
+        result = emit_session_start_output()
         _assert_session_start_json(result)
 
     def test_session_start_hook_ids_in_hook_common(self) -> None:
         """SESSION_START_HOOK_IDS が hook_common の single source of truth から取得されること。"""
-        from devgear.hooks.run_with_flags import _SESSION_START_HOOK_IDS as rwf_ids
+        from devgear.hooks.run_with_flags import SESSION_START_HOOK_IDS as rwf_ids
 
         assert rwf_ids is hook_common.SESSION_START_HOOK_IDS
 

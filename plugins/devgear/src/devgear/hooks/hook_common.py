@@ -126,6 +126,8 @@ SESSION_START_HOOK_IDS: frozenset[str] = frozenset(
 def emit_session_start_output(additional_context: str = "") -> str:
     """SessionStart 用の hookSpecificOutput JSON 文字列を返す。
 
+    stdout への書き込みは行わない純粋関数として使う。
+
     Args:
         additional_context: コンテキストに注入する追加文字列。
 

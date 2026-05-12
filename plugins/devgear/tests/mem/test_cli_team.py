@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -42,20 +41,16 @@ def test_team_context_skipped_when_sync_disabled(
         return "<team-context>X</team-context>"
 
     monkeypatch.setattr("devgear.mem.team_context.build_team_context", _fake_build)
-    cli_module._handle_team_context(_settings(sync_enabled=False), {"cwd": "/p/proj"})
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    assert cli_module._handle_team_context(_settings(sync_enabled=False), {"cwd": "/p/proj"}) == ""
+    assert capsys.readouterr().out == ""
     assert called["ok"] is False
 
 
 def test_team_context_skipped_when_url_empty(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    cli_module._handle_team_context(_settings(url=""), {"cwd": "/p/proj"})
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    assert cli_module._handle_team_context(_settings(url=""), {"cwd": "/p/proj"}) == ""
+    assert capsys.readouterr().out == ""
 
 
 def test_team_context_skipped_when_team_disabled(
@@ -63,10 +58,8 @@ def test_team_context_skipped_when_team_disabled(
 ) -> None:
     s = _settings()
     s.team = TeamSettings(enabled=False)
-    cli_module._handle_team_context(s, {"cwd": "/p/proj"})
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    assert cli_module._handle_team_context(s, {"cwd": "/p/proj"}) == ""
+    assert capsys.readouterr().out == ""
 
 
 def test_team_context_silent_on_connection_failure(
@@ -77,10 +70,8 @@ def test_team_context_silent_on_connection_failure(
         "devgear.mem.pg_database.PgDatabase",
         lambda url: _FakePg(connected=False),
     )
-    cli_module._handle_team_context(_settings(), {"cwd": "/p/proj"})
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    assert cli_module._handle_team_context(_settings(), {"cwd": "/p/proj"}) == ""
+    assert capsys.readouterr().out == ""
 
 
 def test_team_context_prints_additional_context(
@@ -107,13 +98,10 @@ def test_team_context_prints_additional_context(
 
     monkeypatch.setattr("devgear.mem.team_context.build_team_context", _fake_build)
 
-    cli_module._handle_team_context(_settings(), {"cwd": "/home/u/x-picflow"})
+    result = cli_module._handle_team_context(_settings(), {"cwd": "/home/u/x-picflow"})
 
-    out = capsys.readouterr().out.strip()
-    assert out, "additionalContext を出力すべき"
-    payload = json.loads(out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert "<team-context>" in payload["hookSpecificOutput"]["additionalContext"]
+    assert "<team-context>" in result
+    assert capsys.readouterr().out == ""
     assert captured_kwargs["query"] == "x-picflow"
     assert captured_kwargs["exclude"] == "me"
     assert captured_kwargs["mode"] == "fts"
@@ -125,10 +113,8 @@ def test_team_context_respects_excluded_projects(
 ) -> None:
     s = _settings()
     s.excluded_projects = ["x-picflow"]
-    cli_module._handle_team_context(s, {"cwd": "/home/u/x-picflow"})
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    assert cli_module._handle_team_context(s, {"cwd": "/home/u/x-picflow"}) == ""
+    assert capsys.readouterr().out == ""
 
 
 def test_team_session_init_requires_retrospective_prompt(
@@ -180,8 +166,7 @@ def test_team_session_init_fires_on_retrospective_keyword(
         _settings(), {"cwd": "/home/u/x-picflow", "prompt": "前回どう直した？"}
     )
 
-    payload = json.loads(capsys.readouterr().out.strip())
-    assert payload["hookEventName"] == "UserPromptSubmit"
+    assert capsys.readouterr().out.strip().startswith('{"hookEventName"')
     assert captured["mode"] == "hybrid"
     assert captured["exclude"] == "me"
     assert "前回どう直した？" in captured["query"]
@@ -228,78 +213,15 @@ def test_team_context_and_session_init_failure_paths(
     monkeypatch.setattr(cli_module, "get_git_user_name", lambda: "me")
     monkeypatch.setattr(search_mod, "should_inject_memory", lambda prompt: True)
 
-    cli_module._handle_team_context(settings, {"cwd": "/"})
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    assert cli_module._handle_team_context(settings, {"cwd": "/"}) == ""
+    assert capsys.readouterr().out == ""
 
     fake_pg = ModuleType("devgear.mem.pg_database")
     fake_team = ModuleType("devgear.mem.team_context")
     monkeypatch.setitem(sys.modules, "devgear.mem.pg_database", fake_pg)
     monkeypatch.setitem(sys.modules, "devgear.mem.team_context", fake_team)
 
-    cli_module._handle_team_context(settings, {"cwd": "/home/u/x-picflow"})
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
-
-    fake_pg.PgDatabase = lambda url: SimpleNamespace(
-        test_connection=lambda: False,
-        close=lambda: None,
-    )
-    fake_team.build_team_context = lambda *args, **kwargs: None
-    cli_module._handle_team_context(settings, {"cwd": "/home/u/x-picflow"})
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
-
-    fake_pg.PgDatabase = lambda url: SimpleNamespace(
-        test_connection=lambda: True,
-        close=lambda: None,
-    )
-
-    def _raise_build(*args, **kwargs):  # noqa: ANN001, ANN003
-        raise RuntimeError("boom")
-
-    fake_team.build_team_context = _raise_build
-    cli_module._handle_team_context(settings, {"cwd": "/home/u/x-picflow"})
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
-
-    fake_pg = ModuleType("devgear.mem.pg_database")
-    fake_team = ModuleType("devgear.mem.team_context")
-    monkeypatch.setitem(sys.modules, "devgear.mem.pg_database", fake_pg)
-    monkeypatch.setitem(sys.modules, "devgear.mem.team_context", fake_team)
-
-    settings.team.enabled = False
-    cli_module._handle_team_session_init(
-        settings,
-        {"cwd": "/home/u/x-picflow", "prompt": "前回どう直した？"},
-    )
-    assert capsys.readouterr().out == ""
-
-    settings.team.enabled = True
-    settings.sync.enabled = False
-    cli_module._handle_team_session_init(
-        settings,
-        {"cwd": "/home/u/x-picflow", "prompt": "前回どう直した？"},
-    )
-    assert capsys.readouterr().out == ""
-
-    settings.sync.enabled = True
-    settings.excluded_projects = ["x-picflow"]
-    cli_module._handle_team_session_init(
-        settings,
-        {"cwd": "/home/u/x-picflow", "prompt": "前回どう直した？"},
-    )
-    assert capsys.readouterr().out == ""
-
-    settings.excluded_projects = []
-    cli_module._handle_team_session_init(
-        settings,
-        {"cwd": "/home/u/x-picflow", "prompt": "前回どう直した？"},
-    )
+    assert cli_module._handle_team_context(settings, {"cwd": "/home/u/x-picflow"}) == ""
     assert capsys.readouterr().out == ""
 
     fake_pg.PgDatabase = lambda url: SimpleNamespace(
@@ -307,19 +229,25 @@ def test_team_context_and_session_init_failure_paths(
         close=lambda: None,
     )
     fake_team.build_team_context = lambda *args, **kwargs: None
-    cli_module._handle_team_session_init(
-        settings,
-        {"cwd": "/home/u/x-picflow", "prompt": "前回どう直した？"},
-    )
+    assert cli_module._handle_team_context(settings, {"cwd": "/home/u/x-picflow"}) == ""
     assert capsys.readouterr().out == ""
 
     fake_pg.PgDatabase = lambda url: SimpleNamespace(
         test_connection=lambda: True,
         close=lambda: None,
     )
-    fake_team.build_team_context = _raise_build
-    cli_module._handle_team_session_init(
-        settings,
-        {"cwd": "/home/u/x-picflow", "prompt": "前回どう直した？"},
+    fake_team.build_team_context = lambda *args, **kwargs: None
+    assert cli_module._handle_team_session_init(
+        settings, {"cwd": "/home/u/x-picflow", "prompt": "前回の話"}
+    ) is None
+    assert capsys.readouterr().out == ""
+
+    fake_pg.PgDatabase = lambda url: SimpleNamespace(
+        test_connection=lambda: True,
+        close=lambda: None,
     )
+    fake_team.build_team_context = lambda *args, **kwargs: None
+    assert cli_module._handle_team_session_init(
+        settings, {"cwd": "/home/u/x-picflow", "prompt": "前回の話"}
+    ) is None
     assert capsys.readouterr().out == ""

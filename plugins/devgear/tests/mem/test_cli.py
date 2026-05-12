@@ -336,7 +336,6 @@ def test_record_command_requires_content(monkeypatch, tmp_path: Path) -> None:
 
 def test_mem_main_module_invokes_cli_main(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["python", "--help"])
-
     with pytest.raises(SystemExit) as excinfo:
         runpy.run_module("devgear.mem.__main__", run_name="__main__")
 

@@ -199,7 +199,7 @@ def test_handle_setup_and_observe_branches(monkeypatch: pytest.MonkeyPatch, tmp_
 
     monkeypatch.setattr(cli, "_open_db", lambda current_settings: open_fake_db(db))
 
-    cli._handle_setup(settings)
+    assert cli._handle_setup(settings) == ""
     assert settings.data_path.exists()
 
     import devgear.mem.chunker as chunker_mod
@@ -237,12 +237,10 @@ def test_handle_session_start_commands_emit_json(
 
     monkeypatch.setattr(cli, "_open_db", lambda current_settings: open_fake_db(db))
 
-    cli._handle_setup(settings)
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    assert cli._handle_setup(settings) == ""
+    assert capsys.readouterr().out == ""
 
-    cli._handle_record_project_profile(
+    assert cli._handle_record_project_profile(
         settings,
         {
             "project": "repo",
@@ -252,10 +250,10 @@ def test_handle_session_start_commands_emit_json(
             "primary_language": "python",
             "scope_hint": "project",
         },
-    )
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    ) == ""
+    assert capsys.readouterr().out == ""
+
+    assert cli._handle_context(settings, {"cwd": str(tmp_path)}) == ""
 
 
 def test_sync_import_and_dashboard_helpers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -303,11 +301,9 @@ def test_handle_context_and_search_error_paths(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setattr(cli.log, "warning", lambda msg, *args: warnings.append(msg % args if args else msg))
 
     monkeypatch.setattr(cli, "_open_db", lambda settings: (_ for _ in ()).throw(RuntimeError("ctx boom")))
-    cli._handle_context(settings, {"cwd": str(tmp_path)})
+    assert cli._handle_context(settings, {"cwd": str(tmp_path)}) == ""
     assert any("コンテキスト生成失敗" in warning for warning in warnings)
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    assert capsys.readouterr().out == ""
 
     cli._handle_search(settings, {"query": "   "})
     assert json.loads(capsys.readouterr().out) == {"results": []}
@@ -326,20 +322,79 @@ def test_main_settings_failure_and_invalid_stdin(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(cli.Settings, "load", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(logger_mod, "setup", lambda *args, **kwargs: None)
     monkeypatch.setattr(sys, "argv", ["python", "context"])
-    with pytest.raises(SystemExit) as excinfo:
-        cli.main()
-    assert excinfo.value.code == 0
-    assert "設定/ログ初期化失敗" in capsys.readouterr().err
+    assert cli.main() == 0
+    captured = capsys.readouterr()
+    assert "設定/ログ初期化失敗" in captured.err
+    payload = json.loads(captured.out)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert payload["hookSpecificOutput"]["additionalContext"] == ""
 
     warnings: list[str] = []
     monkeypatch.setattr(cli.Settings, "load", lambda: settings)
     monkeypatch.setattr(logger_mod, "setup", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli.log, "warning", lambda msg, *args: warnings.append(msg % args if args else msg))
-    monkeypatch.setattr(cli, "_handle_context", lambda *args, **kwargs: None)
+    monkeypatch.setitem(cli._COMMAND_HANDLERS, "context", lambda *args, **kwargs: None)
     monkeypatch.setattr(sys, "stdin", io.StringIO("{not-json"))
     monkeypatch.setattr(sys, "argv", ["python", "context"])
-    cli.main()
+    assert cli.main() == 0
     assert any("stdin 読み取り失敗" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize("command", sorted(cli._SESSION_START_COMMANDS))
+def test_main_session_start_commands_always_emit_wrapper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    import devgear.mem.logger as logger_mod
+
+    settings = make_settings(tmp_path)
+    errors: list[str] = []
+    monkeypatch.setattr(cli.Settings, "load", lambda: settings)
+    monkeypatch.setattr(logger_mod, "setup", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli.log, "error", lambda msg, *args: errors.append(msg % args if args else msg))
+    monkeypatch.setitem(
+        cli._COMMAND_HANDLERS,
+        command,
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("handler boom")),
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    monkeypatch.setattr(sys, "argv", ["python", command])
+
+    assert cli.main() == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    assert any(f"コマンド {command} 失敗: handler boom" in error for error in errors)
+
+
+def test_run_normal_command_dispatch_and_exit_code_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    called: list[str] = []
+
+    monkeypatch.setitem(cli._COMMAND_HANDLERS, "search", lambda *_args, **_kwargs: called.append("search") or None)
+
+    assert cli._run_normal_command("search", settings, {"query": "x"}) == 0
+    assert called == ["search"]
+    assert cli._run_normal_command("unknown-command", settings, {}) == 2
+
+
+def test_main_preserves_normal_command_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+
+    monkeypatch.setattr(cli, "_parse_argv_and_stdin", lambda: ("search", {"query": "x"}))
+    monkeypatch.setattr(cli, "_load_settings_or_raise", lambda: settings)
+    monkeypatch.setattr(cli, "_run_normal_command", lambda command, s, stdin_data: 17)
+
+    assert cli.main() == 17
 
 
 def test_main_wraps_handler_exceptions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -351,13 +406,36 @@ def test_main_wraps_handler_exceptions(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setattr(cli.Settings, "load", lambda: settings)
     monkeypatch.setattr(logger_mod, "setup", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli.log, "error", lambda msg, *args: errors.append(msg % args if args else msg))
-    monkeypatch.setattr(cli, "_handle_context", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setitem(cli._COMMAND_HANDLERS, "context", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     monkeypatch.setattr(sys, "argv", ["python", "context"])
 
     # SessionStart 系コマンドは例外発生時も JSON を出力して自然終了（SystemExit を上げない）
-    cli.main()
+    assert cli.main() == 0
     assert any("コマンド context 失敗" in error for error in errors)
+
+
+def test_main_error_path_logging_contract_for_normal_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import devgear.mem.logger as logger_mod
+
+    settings = make_settings(tmp_path)
+    errors: list[str] = []
+
+    monkeypatch.setattr(cli.Settings, "load", lambda: settings)
+    monkeypatch.setattr(logger_mod, "setup", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli.log, "error", lambda msg, *args: errors.append(msg % args if args else msg))
+    monkeypatch.setitem(cli._COMMAND_HANDLERS, "search", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    monkeypatch.setattr(sys, "argv", ["python", "search"])
+
+    assert cli.main() == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert any("コマンド search 失敗: boom" in error for error in errors)
 
 
 def test_session_init_excluded_project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -568,6 +646,29 @@ def test_handle_dashboard_html_and_disabled_pg(monkeypatch: pytest.MonkeyPatch, 
     assert json.loads(capsys.readouterr().out)["success"] is True
 
 
+def test_handle_dashboard_rejects_unsafe_output_path_and_allows_safe_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = make_settings(tmp_path)
+    settings.sync.enabled = False
+    monkeypatch.setattr(cli, "_open_db", lambda settings: open_fake_db(FakeDB()))
+
+    unsafe_output = tmp_path.parent / "dashboard-unsafe.json"
+    cli._handle_dashboard(settings, {"output": str(unsafe_output), "format": "json"})
+    rejected = json.loads(capsys.readouterr().out)
+    assert rejected["success"] is False
+    assert "output path" in rejected["error"]
+    assert not unsafe_output.exists()
+
+    safe_output = tmp_path / "dashboard-safe.json"
+    cli._handle_dashboard(settings, {"output": str(safe_output), "format": "json"})
+    accepted = json.loads(capsys.readouterr().out)
+    assert accepted["success"] is True
+    assert safe_output.exists()
+
+
 def test_handle_dashboard_json_and_main_entrypoints(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     settings = make_settings(tmp_path)
 
@@ -633,16 +734,12 @@ def test_handle_dashboard_json_and_main_entrypoints(monkeypatch: pytest.MonkeyPa
     assert out_data["project_overview"]["projects"][0]["id"] == "p1"
 
     monkeypatch.setattr(sys, "argv", ["python"])
-    with pytest.raises(SystemExit) as excinfo:
-        cli.main()
-    assert excinfo.value.code == 0
+    assert cli.main() == 0
 
     monkeypatch.setattr(cli.Settings, "load", lambda: settings)
     monkeypatch.setattr("devgear.mem.logger.setup", lambda *args, **kwargs: None)
     monkeypatch.setattr(sys, "argv", ["python", "not-a-command"])
-    with pytest.raises(SystemExit) as excinfo:
-        cli.main()
-    assert excinfo.value.code == 0  # 未知コマンドは exit 0（"Failed with non-blocking status code" 防止）
+    assert cli.main() == 2
 
 
 def test_collect_project_overview_skips_invalid_registry_entries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -680,12 +777,16 @@ def test_main_routes_all_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     ]
 
     for name in commands:
-        monkeypatch.setattr(cli, f"_handle_{name.replace('-', '_')}", lambda *args, _name=name, **kwargs: called.append(_name))
+        monkeypatch.setitem(
+            cli._COMMAND_HANDLERS,
+            name,
+            lambda *args, _name=name, **kwargs: called.append(_name) or "",
+        )
 
     for command in commands:
         monkeypatch.setattr(sys, "argv", ["python", command])
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
-        cli.main()
+        assert cli.main() == 0
 
     assert called == commands
 
@@ -716,7 +817,7 @@ def test_setup_command_imports_without_torch(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setattr(sys, "argv", ["python", "setup"])
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
 
-    reloaded_cli.main()
+    assert reloaded_cli.main() == 0
 
     assert "devgear.mem.embedding" not in sys.modules
     payload = json.loads(capsys.readouterr().out)
@@ -727,18 +828,14 @@ def test_main_help_and_unknown_command(monkeypatch: pytest.MonkeyPatch, tmp_path
     import devgear.mem.logger as logger_mod
 
     monkeypatch.setattr(sys, "argv", ["python", "--help"])
-    with pytest.raises(SystemExit) as excinfo:
-        cli.main()
-    assert excinfo.value.code == 0
+    assert cli.main() == 0
     assert "init" in capsys.readouterr().out
 
     settings = make_settings(tmp_path)
     monkeypatch.setattr(cli.Settings, "load", lambda: settings)
     monkeypatch.setattr(logger_mod, "setup", lambda *args, **kwargs: None)
     monkeypatch.setattr(sys, "argv", ["python", "bogus"])
-    with pytest.raises(SystemExit) as excinfo:
-        cli.main()
-    assert excinfo.value.code == 0  # 未知コマンドは exit 0（"Failed with non-blocking status code" 防止）
+    assert cli.main() == 2
 
 
 def test_cli_entrypoint_module(monkeypatch: pytest.MonkeyPatch) -> None:

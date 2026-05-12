@@ -245,10 +245,73 @@ def test_session_start_slim_injection_and_error_branch(monkeypatch: pytest.Monke
     monkeypatch.setattr(
         session_start,
         "_SLIM_SKILL_PATH",
-        SimpleNamespace(exists=lambda: True, read_text=lambda *args, **kwargs: (_ for _ in ()).throw(OSError("boom"))),
+        SimpleNamespace(
+            exists=lambda: True,
+            read_text=lambda *args, **kwargs: (_ for _ in ()).throw(OSError("boom\nbad\x1b[31m")),
+        ),
     )
     assert json.loads(session_start.run(json.dumps({"session_id": "abc"})))["hookSpecificOutput"]["additionalContext"] == ""
     assert any("Slim injection error" in message for message in logs)
+    assert any(
+        "Slim injection error" in message and "\n" not in message and "\x1b" not in message
+        for message in logs
+    )
+
+
+def test_session_start_main_sanitizes_exception_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    logs: list[str] = []
+    monkeypatch.setattr(session_start, "read_raw_stdin", lambda: "raw")
+    monkeypatch.setattr(session_start, "run", lambda raw: (_ for _ in ()).throw(RuntimeError("boom\nbad\x1b[31m")))
+    monkeypatch.setattr(session_start, "log", logs.append)
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        assert session_start.main() == 0
+
+    assert stdout.getvalue().strip().startswith("{")
+    assert any("[SessionStart] Error" in message for message in logs)
+    assert any("[SessionStart] Error" in message and "\n" not in message and "\x1b" not in message for message in logs)
+
+
+def test_session_start_sanitizes_git_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    logs: list[str] = []
+
+    class FakeDatabase:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def upsert_project_profile(self, profile) -> None:  # noqa: ANN001
+            self.profile = profile
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_start, "log", logs.append)
+    monkeypatch.setattr(session_start, "get_git_user_name", lambda: "me")
+    monkeypatch.setattr(
+        session_start,
+        "check_output_text",
+        lambda cmd, timeout=5.0: {
+            ("git", "rev-parse", "--abbrev-ref", "HEAD"): "feature\nbranch\x1b[31m",
+            ("git", "rev-parse", "--short=12", "HEAD"): "abc123\x00def",
+            ("git", "status", "--porcelain"): " M file.py\n",
+        }[tuple(cmd)],
+    )
+    monkeypatch.setattr("devgear.mem.database.Database", FakeDatabase)
+    monkeypatch.setattr(
+        session_start.Settings,
+        "load",
+        lambda: SimpleNamespace(db_path=tmp_path / "mem.db", slim=SimpleNamespace(enabled=False)),
+    )
+
+    session_start._save_project_profile(
+        SimpleNamespace(languages=["python"], frameworks=["pytest"], primary_language="python")
+    )
+
+    assert any("git branch=" in message for message in logs)
+    assert all("\n" not in message and "\x1b" not in message for message in logs)
 
 
 def test_hook_common_is_truthy_handles_falsey_values() -> None:

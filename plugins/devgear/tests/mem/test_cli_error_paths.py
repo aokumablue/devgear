@@ -205,7 +205,7 @@ def test_record_and_profile_and_item_run_handlers(
     assert payload["interaction_index"] == 0
     assert db.interactions[0].ai_response_summary == "summary"
 
-    cli._handle_record_project_profile(
+    assert cli._handle_record_project_profile(
         settings,
         {
             "project": "repo",
@@ -217,10 +217,8 @@ def test_record_and_profile_and_item_run_handlers(
             "build_command": "build",
             "scope_hint": "project",
         },
-    )
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+    ) == ""
+    assert capsys.readouterr().out == ""
     assert db.project_profiles["repo"].languages == ["python"]
 
     cli._handle_get_project_profile(settings, {"project": "repo"})
@@ -261,8 +259,8 @@ def test_record_and_profile_failure_paths(
         settings,
         {"session_id": "s1", "user_prompt_full": "prompt"},
     )
-    cli._handle_record_project_profile(settings, {"project": "repo"})
-    cli._handle_get_project_profile(settings, {"project": "repo"})
+    assert cli._handle_record_project_profile(settings, {"project": "repo"}) == ""
+    assert cli._handle_get_project_profile(settings, {"project": "repo"}) is None
     cli._handle_record_item_run(settings, {"skill_name": "skill-a"})
 
     payloads = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line]

@@ -101,6 +101,26 @@ def test_run_with_flags_reads_and_truncates_utf8_payload(monkeypatch: pytest.Mon
     assert text == "�"
 
 
+def test_run_with_flags_reads_without_stdin_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+    class DummyTextStdin:
+        def __init__(self, raw: str) -> None:
+            self._stream = io.StringIO(raw)
+            self.read_calls: list[int] = []
+
+        def read(self, size: int = -1) -> str:
+            self.read_calls.append(size)
+            return self._stream.read(size)
+
+    dummy_stdin = DummyTextStdin("abcdef")
+    monkeypatch.setattr(run_with_flags.sys, "stdin", dummy_stdin)
+
+    text, truncated = run_with_flags.read_raw_stdin_with_truncation(3)
+
+    assert truncated is True
+    assert text == "abc"
+    assert dummy_stdin.read_calls == [4]
+
+
 def test_run_with_flags_returns_child_stdout_when_hook_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     stdout: list[str] = []
     monkeypatch.setattr(run_with_flags.sys, "argv", ["launcher.py", "hook-id", "target"])
@@ -137,12 +157,30 @@ def test_run_with_flags_emits_session_start_fallback_json_when_child_stdout_empt
     assert payload["hookSpecificOutput"]["additionalContext"] == ""
 
 
-def test_run_with_flags_skips_disabled_hook(monkeypatch: pytest.MonkeyPatch) -> None:
-    import io
-
+def test_run_with_flags_skips_disabled_hook_with_unbounded_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     stdout: list[str] = []
+    payload = "payload-" + "x" * 1024
+    calls: list[int] = []
+
+    class _Buffer:
+        def read(self) -> bytes:
+            calls.append(-1)
+            return payload.encode("utf-8")
+
+    class _StdIn:
+        def __init__(self) -> None:
+            self.buffer = _Buffer()
+
+        def read(self, *_args: object, **_kwargs: object) -> str:
+            raise AssertionError("disabled hook path must not use truncated stdin reader")
+
     monkeypatch.setattr(run_with_flags.sys, "argv", ["launcher.py", "hook-id", "target"])
-    monkeypatch.setattr(run_with_flags.sys, "stdin", io.StringIO("payload"))
+    monkeypatch.setattr(run_with_flags.sys, "stdin", _StdIn())
+    monkeypatch.setattr(
+        run_with_flags,
+        "read_raw_stdin_with_truncation",
+        lambda max_bytes=0: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
     monkeypatch.setattr(run_with_flags, "is_hook_enabled", lambda hook_id, profiles=None: False)
     monkeypatch.setattr(
         run_with_flags.subprocess,
@@ -152,7 +190,8 @@ def test_run_with_flags_skips_disabled_hook(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(run_with_flags, "write_stdout", stdout.append)
 
     assert run_with_flags.main() == 0
-    assert stdout == ["payload"]
+    assert stdout == [payload]
+    assert calls == [-1]
 
 
 def test_run_with_flags_blocks_truncated_payload_for_guarded_hook(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -179,7 +218,7 @@ def test_run_with_flags_resolve_target_command_accepts_executable_targets(
     relative.write_text("#!/bin/sh\necho ok", encoding="utf-8")
     relative.chmod(0o755)
 
-    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
+    monkeypatch.setattr(run_with_flags, "REPO_ROOT", plugin_root)
 
     assert run_with_flags.resolve_target_command("tool", ["x"]) == [str(relative), "x"]
 
@@ -248,16 +287,16 @@ def test_session_start_git_info_and_scope_hint_helpers(monkeypatch: pytest.Monke
     logs: list[str] = []
     monkeypatch.setattr(session_start, "log", logs.append)
 
-    def fake_check_output(cmd: list[str], **_kwargs: object) -> bytes:
+    def fake_check_output(cmd: list[str], **_kwargs: object) -> str:
         if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
-            raise RuntimeError("no branch")
+            raise subprocess.CalledProcessError(1, cmd, output=b"", stderr=b"no branch")
         if cmd[:3] == ["git", "rev-parse", "--short=12"]:
-            raise RuntimeError("no commit")
+            raise subprocess.CalledProcessError(1, cmd, output=b"", stderr=b"no commit")
         if cmd[:2] == ["git", "status"]:
-            return b" M file1\n?? file2\n"
+            return " M file1\n?? file2\n"
         raise AssertionError(f"unexpected command: {cmd}")
 
-    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(session_start, "check_output_text", fake_check_output)
 
     info = session_start._get_git_info()
     assert info["branch"] is None
@@ -268,16 +307,16 @@ def test_session_start_git_info_and_scope_hint_helpers(monkeypatch: pytest.Monke
 
     logs.clear()
 
-    def fake_check_output_status(cmd: list[str], **_kwargs: object) -> bytes:
+    def fake_check_output_status(cmd: list[str], **_kwargs: object) -> str:
         if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
-            return b"main\n"
+            return "main\n"
         if cmd[:3] == ["git", "rev-parse", "--short=12"]:
-            return b"abc123\n"
+            return "abc123\n"
         if cmd[:2] == ["git", "status"]:
-            raise RuntimeError("no status")
+            raise subprocess.CalledProcessError(1, cmd, output=b"", stderr=b"no status")
         raise AssertionError(f"unexpected command: {cmd}")
 
-    monkeypatch.setattr(subprocess, "check_output", fake_check_output_status)
+    monkeypatch.setattr(session_start, "check_output_text", fake_check_output_status)
 
     info = session_start._get_git_info()
     assert info["branch"] == "main"
@@ -744,7 +783,11 @@ def test_run_with_flags_build_env_and_resolve_command_branches(
 
     relative_shell = plugin_root / "rel-tool.sh"
     relative_shell.write_text("#!/bin/sh\necho ok", encoding="utf-8")
-    assert run_with_flags.resolve_target_command("rel-tool.sh", ["y"]) == ["bash", str(relative_shell), "y"]
+    assert run_with_flags.resolve_target_command(
+        "rel-tool.sh",
+        ["y"],
+        plugin_root=plugin_root,
+    ) == ["bash", str(relative_shell), "y"]
 
     batch_script = tmp_path / "tool.cmd"
     batch_script.write_text("@echo off\necho ok", encoding="utf-8")
@@ -754,7 +797,11 @@ def test_run_with_flags_build_env_and_resolve_command_branches(
 
     relative_cmd = plugin_root / "rel-tool.cmd"
     relative_cmd.write_text("@echo off\necho ok", encoding="utf-8")
-    assert run_with_flags.resolve_target_command("rel-tool.cmd", ["z"]) == ["cmd", "/c", str(relative_cmd), "z"]
+    assert run_with_flags.resolve_target_command(
+        "rel-tool.cmd",
+        ["z"],
+        plugin_root=plugin_root,
+    ) == ["cmd", "/c", str(relative_cmd), "z"]
 
     original_resolve = run_with_flags.Path.resolve
 

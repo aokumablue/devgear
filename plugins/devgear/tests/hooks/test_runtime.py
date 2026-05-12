@@ -60,6 +60,21 @@ def test_run_with_flags_skips_disabled_hook() -> None:
     assert result.stderr == ""
 
 
+def test_run_with_flags_skips_disabled_hook_without_truncating_large_stdin() -> None:
+    payload = "a" * (1024 * 1024 + 128)
+    result = run_launcher(
+        "devgear.hooks.run_with_flags",
+        "test-hook",
+        "devgear.hooks.block_no_verify",
+        "standard",
+        input_text=payload,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == payload
+    assert result.stderr == ""
+
+
 def test_run_with_flags_propagates_blocked_hook() -> None:
     payload = json.dumps({"tool_input": {"command": "git commit --no-verify"}})
     result = run_launcher(
@@ -108,15 +123,13 @@ def test_resolve_target_command_absolute_bash_script(tmp_path: Path) -> None:
 
 def test_resolve_target_command_relative_script_in_plugin_root(tmp_path: Path, monkeypatch) -> None:
     """CLAUDE_PLUGIN_ROOT 内の相対パス スクリプトを解決します。"""
-    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
-
     # プラグインルート内にスクリプトを作成
     script = tmp_path / "subdir" / "script.py"
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text("print('test')")
 
     # 相対パスで解決
-    cmd = resolve_target_command("subdir/script.py", ["arg"])
+    cmd = resolve_target_command("subdir/script.py", ["arg"], plugin_root=tmp_path)
     assert cmd == [sys.executable, str(script), "arg"]
 
 
@@ -124,8 +137,6 @@ def test_resolve_target_command_relative_path_escapes_plugin_root(tmp_path: Path
     """CLAUDE_PLUGIN_ROOT を逃脱する相対パスはモジュール名として扱われます。"""
     plugin_root = tmp_path / "plugin"
     plugin_root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
-
     # プラグインルートの外にファイルを作成
     outside_file = tmp_path / "outside" / "script.py"
     outside_file.parent.mkdir(parents=True, exist_ok=True)
@@ -135,7 +146,7 @@ def test_resolve_target_command_relative_path_escapes_plugin_root(tmp_path: Path
     escape_path = "../../outside/script.py"
 
     # resolve_target_command が存在しないパスをモジュール名として処理することを確認
-    cmd = resolve_target_command(escape_path, ["arg"])
+    cmd = resolve_target_command(escape_path, ["arg"], plugin_root=plugin_root)
     # モジュール名として処理される（外部ファイルへのアクセスは拒否）
     assert cmd == [sys.executable, "-m", escape_path, "arg"]
 
@@ -143,10 +154,8 @@ def test_resolve_target_command_relative_path_escapes_plugin_root(tmp_path: Path
 def test_resolve_target_command_relative_nonexistent_path_as_module(monkeypatch) -> None:
     """存在しない相対パスはモジュール名として処理されます。"""
     plugin_root = Path("/nonexistent/plugin")
-    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
-
     # 存在しないパスはモジュール名として処理される
-    cmd = resolve_target_command("nonexistent.module", ["arg"])
+    cmd = resolve_target_command("nonexistent.module", ["arg"], plugin_root=plugin_root)
     assert cmd == [sys.executable, "-m", "nonexistent.module", "arg"]
 
 
