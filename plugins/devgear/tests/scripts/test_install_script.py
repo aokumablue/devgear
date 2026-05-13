@@ -50,6 +50,10 @@ def write_fake_python(path: Path, log_path: Path) -> None:
         "set -euo pipefail\n"
         f"REAL_PYTHON={sys.executable!r}\n"
         f"LOG_PATH={str(log_path)!r}\n"
+        ': "${FAKE_PYTHON_STDOUT:=}"\n'
+        ': "${FAKE_PYTHON_STDERR:=}"\n'
+        ': "${FAKE_PYTHON_FAIL_ENSUREPIP:=0}"\n'
+        ': "${FAKE_PYTHON_FAIL_PIP:=0}"\n'
         'if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then\n'
         '  if [[ "${3:-}" == "--help" ]]; then\n'
         "    exit 0\n"
@@ -62,11 +66,29 @@ def write_fake_python(path: Path, log_path: Path) -> None:
         "  exit 0\n"
         "fi\n"
         'if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then\n'
+        '  if [[ -n "${FAKE_PYTHON_STDOUT}" ]]; then\n'
+        '    printf "%s\\n" "${FAKE_PYTHON_STDOUT}"\n'
+        "  fi\n"
+        '  if [[ -n "${FAKE_PYTHON_STDERR}" ]]; then\n'
+        '    printf "%s\\n" "${FAKE_PYTHON_STDERR}" >&2\n'
+        "  fi\n"
         '  echo "pip:${*:3}" >> "${LOG_PATH}"\n'
+        '  if [[ "${FAKE_PYTHON_FAIL_PIP}" == "1" ]]; then\n'
+        "    exit 23\n"
+        "  fi\n"
         "  exit 0\n"
         "fi\n"
         'if [[ "${1:-}" == "-m" && "${2:-}" == "ensurepip" ]]; then\n'
+        '  if [[ -n "${FAKE_PYTHON_STDOUT}" ]]; then\n'
+        '    printf "%s\\n" "${FAKE_PYTHON_STDOUT}"\n'
+        "  fi\n"
+        '  if [[ -n "${FAKE_PYTHON_STDERR}" ]]; then\n'
+        '    printf "%s\\n" "${FAKE_PYTHON_STDERR}" >&2\n'
+        "  fi\n"
         '  echo "ensurepip:${*:3}" >> "${LOG_PATH}"\n'
+        '  if [[ "${FAKE_PYTHON_FAIL_ENSUREPIP}" == "1" ]]; then\n'
+        "    exit 24\n"
+        "  fi\n"
         "  exit 0\n"
         "fi\n"
         'if [[ "${1:-}" == "-m" && "${2:-}" == "devgear.mem" && "${3:-}" == "setup" ]]; then\n'
@@ -83,6 +105,16 @@ def write_fake_python(path: Path, log_path: Path) -> None:
         "  exit $?\n"
         "fi\n"
         'exec "${REAL_PYTHON}" "$@"\n',
+    )
+
+
+def write_fake_psql(path: Path) -> None:
+    """psql の存在確認を通すだけのスタブを書き込む。"""
+    write_exec(
+        path,
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "exit 0\n",
     )
 
 
@@ -212,14 +244,79 @@ def test_install_dev_script_runs_user_and_dev_steps(tmp_path: Path) -> None:
 
     log = log_path.read_text(encoding="utf-8")
     log_lines = log.splitlines()
-    editable_idx = next(i for i, line in enumerate(log_lines) if line.startswith("pip:install -e"))
+    editable_idx = next(i for i, line in enumerate(log_lines) if "pip:install" in line and " -e " in line)
     torch_idx = next(i for i, line in enumerate(log_lines) if "torch>=2.0" in line)
 
-    assert "pip:install --upgrade pip wheel" in log
-    assert "pip:install -e" in log
+    assert "pip:install --no-input --quiet --disable-pip-version-check --upgrade pip wheel" in log
+    assert " -e " in log
     assert "torch>=2.0" in log
     assert "--index-url https://download.pytorch.org/whl/cpu" in log_lines[torch_idx]
     assert torch_idx < editable_idx
     assert "psycopg[binary]" in log
     assert "prefetch" in log
     assert "[dev]" in log
+
+
+def test_install_scripts_suppress_pip_noise(tmp_path: Path) -> None:
+    """依存導入の詳細ログが成功時に端末へ出ないこと。"""
+    repo = prepare_temp_repo(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    home.mkdir()
+    log_path = tmp_path / "python.log"
+
+    write_fake_python(bin_dir / "python3", log_path)
+    write_fake_python(bin_dir / "python3.12", log_path)
+    write_fake_python(bin_dir / "python3.13", log_path)
+    write_fake_psql(bin_dir / "psql")
+
+    result = run_script(
+        repo / "plugins" / "devgear" / "install-dev.sh",
+        ["--repo-root", str(repo / "plugins" / "devgear")],
+        env={
+            "HOME": str(home),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "FAKE_PYTHON_STDOUT": "noisy pip stdout",
+            "FAKE_PYTHON_STDERR": "noisy pip stderr",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "noisy pip stdout" not in result.stdout
+    assert "noisy pip stderr" not in result.stdout
+    assert "noisy pip stdout" not in result.stderr
+    assert "noisy pip stderr" not in result.stderr
+    assert "[devgear] Installing Python package dependencies into" in result.stdout
+    assert "[devgear] Installing developer-only Python extras" in result.stdout
+
+
+def test_install_script_surfaces_pip_failure_output(tmp_path: Path) -> None:
+    """依存導入が失敗したときは抑制していた出力を見せること。"""
+    repo = prepare_temp_repo(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    home.mkdir()
+    log_path = tmp_path / "python.log"
+
+    write_fake_python(bin_dir / "python3", log_path)
+    write_fake_python(bin_dir / "python3.12", log_path)
+    write_fake_python(bin_dir / "python3.13", log_path)
+    write_fake_psql(bin_dir / "psql")
+
+    result = run_script(
+        repo / "plugins" / "devgear" / "install.sh",
+        ["--repo-root", str(repo / "plugins" / "devgear")],
+        env={
+            "HOME": str(home),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "FAKE_PYTHON_STDOUT": "failing pip stdout",
+            "FAKE_PYTHON_STDERR": "failing pip stderr",
+            "FAKE_PYTHON_FAIL_PIP": "1",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "failing pip stdout" in result.stderr
+    assert "failing pip stderr" in result.stderr

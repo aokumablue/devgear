@@ -20,6 +20,24 @@ Options:
 EOF
 }
 
+run_quietly() {
+  local output_file
+  output_file="$(mktemp)"
+  if "$@" >"${output_file}" 2>&1; then
+    rm -f "${output_file}"
+    return 0
+  else
+    local status=$?
+    cat "${output_file}" >&2
+    rm -f "${output_file}"
+    return "${status}"
+  fi
+}
+
+pip_install_quiet() {
+  run_quietly "${VENV_PYTHON}" -m pip install --no-input --quiet --disable-pip-version-check "$@"
+}
+
 # ---- 引数パース ----
 
 while [[ $# -gt 0 ]]; do
@@ -69,11 +87,11 @@ fi
 
 if ! "${VENV_PYTHON}" -m pip --version >/dev/null 2>&1; then
   echo "[devgear] Bootstrapping pip via ensurepip"
-  "${VENV_PYTHON}" -m ensurepip --upgrade
+  run_quietly "${VENV_PYTHON}" -m ensurepip --upgrade
 fi
 
 echo "[devgear] Installing developer-only Python extras"
-"${VENV_PYTHON}" -m pip install -e "${REPO_ROOT}[dev]"
+pip_install_quiet -e "${REPO_ROOT}[dev]"
 
 # PATH にシムリンクを作成 (venv 外から hook が呼べるように)
 for tool in ruff vulture; do

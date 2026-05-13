@@ -32,6 +32,24 @@ Environment:
 EOF
 }
 
+run_quietly() {
+  local output_file
+  output_file="$(mktemp)"
+  if "$@" >"${output_file}" 2>&1; then
+    rm -f "${output_file}"
+    return 0
+  else
+    local status=$?
+    cat "${output_file}" >&2
+    rm -f "${output_file}"
+    return "${status}"
+  fi
+}
+
+pip_install_quiet() {
+  run_quietly "${VENV_PYTHON}" -m pip install --no-input --quiet --disable-pip-version-check "$@"
+}
+
 # プラットフォム判定
 detect_platform() {
   local os_type
@@ -184,32 +202,32 @@ install_user_python() {
 
   if ! "${VENV_PYTHON}" -m pip --version >/dev/null 2>&1; then
     echo "[devgear] Bootstrapping pip via ensurepip"
-    "${VENV_PYTHON}" -m ensurepip --upgrade
+    run_quietly "${VENV_PYTHON}" -m ensurepip --upgrade
   fi
 
   echo "[devgear] Installing Python package dependencies into ${VENV_DIR}"
-  "${VENV_PYTHON}" -m pip install --upgrade pip wheel
+  pip_install_quiet --upgrade pip wheel
 
   # プラットフォム別 torch インストール
   # macOS: PyPI から取得（最新は 2.2.2 / Intel Mac）
   # Linux: CPU-only インデックスから取得
   if [[ "${PLATFORM}" == "macos" ]]; then
     echo "[devgear] Installing torch for macOS"
-    "${VENV_PYTHON}" -m pip install 'torch>=2.0,<3.0' 'numpy>=2.0'
+    pip_install_quiet 'torch>=2.0,<3.0' 'numpy>=2.0'
   else
     echo "[devgear] Installing torch for Linux (CPU-only)"
-    "${VENV_PYTHON}" -m pip install 'torch>=2.0,<3.0' 'numpy>=2.0' --index-url https://download.pytorch.org/whl/cpu
+    pip_install_quiet --index-url https://download.pytorch.org/whl/cpu 'torch>=2.0,<3.0' 'numpy>=2.0'
   fi
 
   # sentence-transformers 3.x + transformers 4.41+ は macOS Intel / Ubuntu 共に対応
   # 3.x は torch>=1.11.0 で動き、ModernBERT（ruri-v3-310m）をサポートする
-  "${VENV_PYTHON}" -m pip install \
+  pip_install_quiet \
     'sentence-transformers>=3.0,<6.0' \
     'transformers>=4.41,<6.0'
 
   # --no-deps: pyproject.toml の依存解決をスキップして上で固定したバージョンを維持する
-  "${VENV_PYTHON}" -m pip install --no-deps -e "${REPO_ROOT}"
-  "${VENV_PYTHON}" -m pip install 'psycopg[binary]' 'psycopg-pool' 'protobuf' 'sentencepiece'
+  pip_install_quiet --no-deps -e "${REPO_ROOT}"
+  pip_install_quiet 'psycopg[binary]' 'psycopg-pool' 'protobuf' 'sentencepiece'
 
   echo "[devgear] Prefetching embedding model cache"
   "${VENV_PYTHON}" - <<'PY' || echo "[devgear] Note: Embedding model prefetch failed. Models load on first use."

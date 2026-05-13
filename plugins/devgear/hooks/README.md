@@ -26,6 +26,9 @@
 | **デスクトップ通知** | `Stop` | タスクサマリーの macOS デスクトップ通知を送信（standard+） |
 | **セッション終了マーカー** | `SessionEnd` | ライフサイクルマーカーとクリーンアップログ |
 
+`SessionStart` の `session_install` は、`~/.devgear/plugin_installed_version` と `plugin.json` の version が異なるときだけ `install.sh` を実行します。
+進捗や `install.sh` の出力は主に stderr に出るため、起動直後は何も起きていないように見えることがあります。
+
 ## フックのカスタマイズ
 
 ### フックの無効化

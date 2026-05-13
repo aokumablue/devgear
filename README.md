@@ -161,6 +161,7 @@ bash scripts/pg_setup_native.sh --help  # 全オプション表示
 
 - フックは常に strict として動作する
 - `mem` は `observe` → `session-init` → `SessionEnd` を中心に履歴を引き継ぎ、必要時のみ `SessionStart` で文脈を注入する
+- `SessionStart` の `session_install` は plugin version が変わった場合のみ `install.sh` を実行し、詳細ログは stderr に出る
 - 詳細なフック設定は `plugins/devgear/hooks/README.md` を参照する
 
 ## 何が入っているか
@@ -179,7 +180,8 @@ bash scripts/pg_setup_native.sh --help  # 全オプション表示
 3. `/c-tdd`
 4. `/c-review`
 5. `/c-clean`
-6. `/c-refactor`
+6. `/c-bugfix`
+7. `/c-refactor`
 
 ## 詳細
 
