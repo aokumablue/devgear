@@ -871,3 +871,114 @@ class TestSyncHelpers:
 
         assert _count_pending_embeddings(OkConn(), []) == 0
         assert _count_pending_embeddings(EmptyConn(), ["c1"]) == 0
+
+
+class TestSyncLogVisibility:
+    """スキップ・失敗時のログレベルが info/error になっていることを検証するテスト。
+    処理継続性（例外が外に出ないこと）も合わせて確認する。
+    """
+
+    def test_sync_check_logs_info_on_skip_disabled(self, mock_settings, caplog):
+        """enabled=False のスキップ時に info ログが出ることを確認する。"""
+        import logging
+
+        mock_settings.sync.enabled = False
+        # get_logger("SYNC") は "devgear.mem.SYNC" を返す
+        with caplog.at_level(logging.INFO, logger="devgear.mem.SYNC"):
+            result = sync_check(mock_settings)
+        assert result.success is True
+        assert any("スキップ" in r.message and r.levelno == logging.INFO for r in caplog.records)
+
+    def test_sync_check_skips_when_no_url(self, mock_settings, caplog):
+        """postgres_url 未設定の場合 sync_check は success=True でスキップする。"""
+        import logging
+
+        mock_settings.sync.postgres_url = ""
+        # should_sync が False を返すため sync_check レベルで "スキップ" info ログが出る
+        with caplog.at_level(logging.INFO, logger="devgear.mem.SYNC"):
+            result = sync_check(mock_settings)
+        assert result.success is True
+        assert any("スキップ" in r.message and r.levelno == logging.INFO for r in caplog.records)
+
+    def test_sync_to_postgres_logs_info_on_no_url(self, mock_settings, caplog):
+        """sync_to_postgres で postgres_url 未設定時に info ログが出ることを確認する。"""
+        import logging
+
+        mock_settings.sync.postgres_url = ""
+        with caplog.at_level(logging.INFO, logger="devgear.mem.SYNC"):
+            result = sync_to_postgres(mock_settings)
+        assert result.success is False
+        assert any("postgres_url" in r.message and r.levelno == logging.INFO for r in caplog.records)
+
+    def test_sync_to_postgres_logs_error_on_connection_failure(self, mock_settings, monkeypatch, caplog):
+        """PG 接続失敗時に error ログが出て、かつ処理が継続する（例外が出ない）ことを確認する。"""
+        import logging
+
+        class FakePgDb:
+            def __init__(self, url, **kwargs):  # noqa: ANN001
+                pass
+
+            def test_connection(self):
+                return False
+
+            def close(self):
+                pass
+
+        class FakeDatabase:
+            def __init__(self, path):  # noqa: ANN001
+                pass
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("devgear.mem.sync.PgDatabase", FakePgDb)
+        monkeypatch.setattr("devgear.mem.sync.Database", FakeDatabase)
+
+        with caplog.at_level(logging.ERROR, logger="devgear.mem.SYNC"):
+            result = sync_to_postgres(mock_settings)
+        # 処理は継続し例外は出ない
+        assert result.success is False
+        assert result.error == "PostgreSQL への接続に失敗しました"
+        assert any("PG 接続失敗" in r.message and r.levelno == logging.ERROR for r in caplog.records)
+
+    def test_sync_to_postgres_logs_error_with_traceback_on_exception(
+        self, mock_settings, monkeypatch, caplog
+    ):
+        """例外発生時に error + exc_info が出て、プロセスが継続することを確認する。"""
+        import logging
+
+        class BoomDatabase:
+            def __init__(self, path):  # noqa: ANN001
+                raise RuntimeError("DB 接続失敗")
+
+        monkeypatch.setattr("devgear.mem.sync.Database", BoomDatabase)
+
+        with caplog.at_level(logging.ERROR, logger="devgear.mem.SYNC"):
+            result = sync_to_postgres(mock_settings)
+        assert result.success is False
+        # result.error は _mask_url を通すためパスワード断片を含まない
+        assert result.error is not None
+        assert "TESTPASSWORD" not in (result.error or "")
+        # exc_info=True が付いているので traceback が caplog に含まれる
+        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert error_records, "error レベルのログが出ていない"
+        assert error_records[-1].exc_info is not None
+
+    def test_mask_url(self, monkeypatch):
+        """_mask_url がパスワード部を正しくマスクすることを確認する。"""
+        from devgear.mem.sync import _mask_url
+
+        assert _mask_url("postgresql://user:secret@host:5432/db") == "postgresql://user:***@host:5432/db"
+        assert _mask_url("postgresql://user@host/db") == "postgresql://user@host/db"
+        assert _mask_url("") == ""
+        # @ を含む生パスワードでも正しくマスクされる
+        assert _mask_url("postgresql://user:p@ss@host/db") == "postgresql://user:***@host/db"
+        # 空パスワードは urlparse が password="" と認識しマスクされる
+        masked_empty = _mask_url("postgresql://user:@host/db")
+        assert "user:" in masked_empty
+        assert "@host" in masked_empty
+        # urlparse が例外を投げる場合は元の URL をそのまま返す
+        import devgear.mem.sync as sync_mod
+
+        monkeypatch.setattr(sync_mod, "urlparse", lambda url: (_ for _ in ()).throw(ValueError("parse error")))
+        assert _mask_url("postgresql://user:secret@host/db") == "postgresql://user:secret@host/db"

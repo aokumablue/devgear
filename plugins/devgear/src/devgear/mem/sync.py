@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 from devgear.lib.core_utils import get_git_user_name
 from devgear.mem.database import (
@@ -32,10 +33,34 @@ from devgear.mem.settings import Settings
 
 log = _get_logger("SYNC")
 
+
+def _mask_url(url: str) -> str:
+    """接続 URL のパスワード部を *** に置換する。@ 含みパスワードにも対応する。"""
+    try:
+        parsed = urlparse(url)
+        if parsed.password is not None:
+            netloc = parsed.netloc.replace(f":{parsed.password}@", ":***@", 1)
+            return urlunparse(parsed._replace(netloc=netloc))
+    except Exception:
+        pass
+    return url
+
+
 # 同期失敗後の最小リトライ間隔（秒）
 _MIN_RETRY_INTERVAL = 5 * 60
 # 1回の同期で取得する最大行数（メモリ爆発防止）
 _SYNC_BATCH_SIZE = 500
+# 同期対象テーブル一覧（cli_sync_handlers._count_all_pending でも共有）
+_SYNC_TABLES: tuple[str, ...] = (
+    "memory_chunks",
+    "sessions",
+    "instincts",
+    "adrs",
+    "event_logs",
+    "interaction_logs",
+    "project_profiles",
+    "mem_item_runs",
+)
 
 
 def _row_to_session(row: sqlite3.Row) -> Session:
@@ -184,6 +209,7 @@ def sync_to_postgres(
             return SyncResult(success=True)
 
         if not sync_cfg.postgres_url:
+            log.info("同期スキップ: postgres_url 未設定 (~/.devgear/settings.json の mem.sync.postgres_url を設定してください)")
             return SyncResult(success=False, error="postgres_url が設定されていません")
 
         if not should_sync(settings):
@@ -207,6 +233,8 @@ def sync_to_postgres(
                     settings.save_sync_state()
                 except Exception:
                     pass
+                masked_url = _mask_url(sync_cfg.postgres_url)
+                log.error("PG 接続失敗: %s", masked_url)
                 return SyncResult(success=False, error="PostgreSQL への接続に失敗しました")
 
             if dry_run:
@@ -338,8 +366,8 @@ def sync_to_postgres(
                 settings.save_sync_state()
             except Exception:
                 pass
-            log.error("同期エラー: %s", e)
-            return SyncResult(success=False, error=str(e))
+            log.error("同期エラー: %s", e, exc_info=True)
+            return SyncResult(success=False, error=_mask_url(str(e)))
         finally:
             if sqlite_db is not None:
                 sqlite_db.close()
@@ -405,8 +433,8 @@ def sync_check(settings: Settings) -> SyncResult:
     """
     if not should_sync(settings):
         sync_cfg = settings.sync
-        log.debug(
-            "同期スキップ: enabled=%s postgres_url=%s interval_hours=%d last_synced_at=%.0f "
+        log.info(
+            "同期スキップ: enabled=%s postgres_url_set=%s interval_hours=%d last_synced_at=%.0f "
             "last_sync_attempt_at=%.0f last_sync_success=%s",
             sync_cfg.enabled,
             bool(sync_cfg.postgres_url),

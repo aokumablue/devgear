@@ -1,6 +1,7 @@
 ---
 name: s-skillmake
 description: 新スキル生成/eval実行/ベンチマーク分析/説明文最適化。/c-skillgenからの委譲先。
+context: fork
 ---
 
 # スキル生成・改善

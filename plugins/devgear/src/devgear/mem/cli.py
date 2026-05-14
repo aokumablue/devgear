@@ -20,6 +20,7 @@ from devgear.mem import cli_search_handlers as _search_handlers
 from devgear.mem import cli_session_handlers as _session_handlers
 from devgear.mem import cli_sync_handlers as _sync_handlers
 from devgear.mem import cli_team_handlers as _team_handlers
+from devgear.mem.cli_sync_handlers import SyncStatusDict
 from devgear.mem.logger import get as _get_logger
 from devgear.mem.settings import Settings
 
@@ -132,13 +133,45 @@ def main() -> int:
 
 
 def _handle_setup(settings: Settings) -> str:
-    """Setup: データディレクトリとDB初期化"""
+    """Setup: データディレクトリとDB初期化 + sync 設定診断"""
     try:
         _initialize_db(settings)
         log.info("セットアップ完了: %s", settings.data_path)
     except Exception as e:
         log.warning("setup 失敗: %s", e)
+
+    # lite=True で接続テストをスキップし、セッション開始の遅延を防ぐ
+    try:
+        sync_status = _sync_handlers._build_sync_status_dict(settings, lite=True)
+        recommendations = _build_sync_recommendations(sync_status)
+        log.info(
+            "sync 設定: enabled=%s postgres_url_set=%s psycopg=%s connection=%s",
+            sync_status["enabled"],
+            sync_status["postgres_url_set"],
+            sync_status["psycopg_installed"],
+            sync_status["connection"],
+        )
+        for rec in recommendations:
+            log.warning("setup 推奨: %s", rec)
+    except Exception as e:
+        log.debug("sync 診断スキップ: %s", e)
+
     return ""
+
+
+def _build_sync_recommendations(status: SyncStatusDict) -> list[str]:
+    """sync_status に基づいて推奨アクションの文字列リストを返す。"""
+    recs: list[str] = []
+    if not status["postgres_url_set"]:
+        recs.append(
+            "postgres_url 未設定。"
+            "~/.devgear/settings.json の mem.sync.postgres_url に接続 URL を設定してください"
+        )
+    if not status["psycopg_installed"]:
+        recs.append("psycopg 未インストール。install.sh を再実行してください")
+    if status["connection"] == "failed":
+        recs.append(f"PG 接続失敗: {status['connection_error']}。PG が起動しているか確認してください")
+    return recs
 
 
 def _handle_init(settings: Settings) -> None:
@@ -461,6 +494,7 @@ _COMMAND_HANDLERS: dict[str, _CommandHandler] = {
     "record": _handle_record,
     "sync": _handle_sync,
     "sync-check": lambda settings, stdin_data: (_handle_sync_check(settings) or None),
+    "sync-status": lambda settings, stdin_data: (_sync_handlers.handle_sync_status(settings, stdin_data) or None),
     "import": _handle_import,
     "dashboard": _handle_dashboard,
     "record-interaction": _handle_record_interaction,
