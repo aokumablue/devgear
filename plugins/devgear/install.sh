@@ -161,6 +161,21 @@ ensure_settings_json() {
   fi
 
   mkdir -p "${SETTINGS_DIR}"
+
+  # 信頼鍵ストアを初期化する（DEVGEAR_TRUSTED_KEY_FILE が設定されている場合のみ import）
+  local trust_dir="${SETTINGS_DIR}/trust"
+  mkdir -p "${trust_dir}"
+  chmod 0700 "${trust_dir}"
+  if [[ -n "${DEVGEAR_TRUSTED_KEY_FILE:-}" && -f "${DEVGEAR_TRUSTED_KEY_FILE}" ]]; then
+    local gnupg_dir="${trust_dir}/gnupg"
+    mkdir -p "${gnupg_dir}"
+    chmod 0700 "${gnupg_dir}"
+    cp -- "${DEVGEAR_TRUSTED_KEY_FILE}" "${trust_dir}/maintainer.asc"
+    chmod 0600 "${trust_dir}/maintainer.asc"
+    GNUPGHOME="${gnupg_dir}" gpg --import "${trust_dir}/maintainer.asc" 2>/dev/null || true
+    echo "[devgear] 信頼鍵を import しました: ${trust_dir}/gnupg"
+  fi
+
   "${PYTHON3}" - "${SETTINGS_TEMPLATE_PATH}" "${SETTINGS_PATH}" <<'PY'
 from pathlib import Path
 import json
@@ -190,15 +205,15 @@ install_user_python() {
 
   # torch / sentence-transformers / transformers / huggingface_hub は ONNX 化により不要
   # CVE-2025-32434（torch pickle RCE）攻撃面を根絶するため完全に排除する
-  pip_install_quiet \
-    'onnxruntime>=1.18' \
-    'tokenizers>=0.20' \
-    'pyyaml>=6.0'
+  #
+  # ハッシュロックで PyPI レジストリ側改ざんを検知する（LS-1）。
+  # 再生成: pip-compile --generate-hashes plugins/devgear/requirements.in -o plugins/devgear/requirements.txt
+  run_quietly "${VENV_PYTHON}" -m pip install --no-input --quiet --disable-pip-version-check \
+    --require-hashes -r "${SCRIPT_DIR}/requirements.txt"
 
   # --no-deps: pyproject.toml の依存解決をスキップして上で固定したバージョンを維持する
+  # editable install は --require-hashes と排他のため別途実行する
   pip_install_quiet --no-deps -e "${REPO_ROOT}"
-  # psycopg: PostgreSQL 同期機能を使う場合のみ必要（optional）
-  pip_install_quiet 'psycopg[binary]'
 
   # ONNX モデルを sparse-checkout で取得し ~/.devgear/models/ に統合する
   # 統合済み model.onnx が存在して SHA が一致する場合はスキップする

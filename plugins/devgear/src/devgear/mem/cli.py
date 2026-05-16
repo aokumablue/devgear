@@ -117,6 +117,7 @@ def main() -> int:
         settings = _load_settings_or_raise()
     except Exception as e:
         print(f"設定/ログ初期化失敗: {e}", file=sys.stderr)
+        exit_code = 1
     else:
         try:
             if command in _SESSION_START_COMMANDS:
@@ -125,6 +126,7 @@ def main() -> int:
                 exit_code = _run_normal_command(command, settings, stdin_data)
         except Exception as e:
             log.error("コマンド %s 失敗: %s", command, e)
+            exit_code = 1
     finally:
         if command in _SESSION_START_COMMANDS:
             print_session_start_output(additional_context)

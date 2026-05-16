@@ -37,6 +37,7 @@ def pytest_collection_modifyitems(items: list) -> None:
         if item.fspath.basename in {
             "test_model_assembler.py", "test_embedding_security.py", "test_embedding.py",
             "test_paths.py", "test_settings.py", "test_settings_slim.py",
+            "test_cli.py",
         }:
             continue
         if not has_sqlite_vec:

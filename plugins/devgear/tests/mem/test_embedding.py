@@ -103,11 +103,16 @@ def reset_embedding_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 
 def _patch_backends(monkeypatch: pytest.MonkeyPatch, hidden_dim: int = 4):
-    """onnxruntime と tokenizers を monkeypatch でモックに差し替える。"""
+    """onnxruntime / tokenizers / onnx を monkeypatch でモックに差し替える。"""
     fake_ort = _make_fake_ort(hidden_dim)
     fake_tok = _make_fake_tokenizers()
+    # onnx.checker.check_model を no-op にする（テスト用偽 ONNX は検証スキップ）
+    mock_onnx = types.SimpleNamespace(
+        checker=types.SimpleNamespace(check_model=lambda *_a, **_kw: None)
+    )
     monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
     monkeypatch.setitem(sys.modules, "tokenizers", fake_tok)
+    monkeypatch.setitem(sys.modules, "onnx", mock_onnx)
     # numpy は実物を使う（軽量なので問題なし）
     return fake_ort, fake_tok
 
@@ -157,7 +162,7 @@ class TestEmbedQuery:
     def test_returns_single_vector(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         """単一クエリを渡すと 1 つのベクトルを返す。"""
         _patch_backends(monkeypatch, hidden_dim=4)
-        result = embedding.embed_query("テスト")
+        result = embedding.embed_query("テスト", "cl-nagoya/ruri-v3-310m")
         assert isinstance(result, list)
         assert isinstance(result[0], float)
 
@@ -165,7 +170,7 @@ class TestEmbedQuery:
         """クエリベクトルが L2 正規化されている。"""
         import math
         _patch_backends(monkeypatch, hidden_dim=4)
-        vec = embedding.embed_query("検索テスト")
+        vec = embedding.embed_query("検索テスト", "cl-nagoya/ruri-v3-310m")
         norm = math.sqrt(sum(x * x for x in vec))
         assert abs(norm - 1.0) < 1e-5
 
@@ -183,6 +188,21 @@ class TestModelNotFound:
         (bad_dir / "tokenizer.json").write_bytes(b"{}")
         monkeypatch.setattr(embedding, "_MODELS_DIR", bad_dir)
         with pytest.raises(FileNotFoundError, match="model.onnx"):
+            embedding.embed(["test"])
+
+    def test_missing_manifest_raises_file_not_found(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """manifest.json が存在しない場合は FileNotFoundError。"""
+        _patch_backends(monkeypatch)
+        bad_dir = tmp_path / "no_manifest"
+        bad_dir.mkdir()
+        # model.onnx と tokenizer.json は必要（_verify_model_sha に到達するため）
+        (bad_dir / "model.onnx").write_bytes(b"fake")
+        (bad_dir / "tokenizer.json").write_bytes(b"{}")
+        # manifest.json は置かない → _verify_model_sha が FileNotFoundError を出す
+        monkeypatch.setattr(embedding, "_MODELS_DIR", bad_dir)
+        with pytest.raises(FileNotFoundError, match="manifest.json"):
             embedding.embed(["test"])
 
     def test_missing_tokenizer_raises_file_not_found(
@@ -262,8 +282,12 @@ class TestTokenTypeIdsBranch:
             InferenceSession=FakeSession,
             SessionOptions=type("SO", (), {"log_severity_level": 3}),
         )
+        mock_onnx = types.SimpleNamespace(
+            checker=types.SimpleNamespace(check_model=lambda *_a, **_kw: None)
+        )
         monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
         monkeypatch.setitem(sys.modules, "tokenizers", _make_fake_tokenizers())
+        monkeypatch.setitem(sys.modules, "onnx", mock_onnx)
 
         result = embedding.embed(["x"])
         assert "token_type_ids" in captured
@@ -375,8 +399,12 @@ class TestTwoPhaseInitRollback:
             InferenceSession=FakeSession,
             SessionOptions=FakeSessionOptions,
         )
+        mock_onnx = types.SimpleNamespace(
+            checker=types.SimpleNamespace(check_model=lambda *_a, **_kw: None)
+        )
         monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
         monkeypatch.setitem(sys.modules, "tokenizers", types.SimpleNamespace(Tokenizer=BrokenTokenizer))
+        monkeypatch.setitem(sys.modules, "onnx", mock_onnx)
 
         with pytest.raises(RuntimeError, match="tokenizer broken"):
             embedding.embed(["test"])
@@ -384,3 +412,55 @@ class TestTwoPhaseInitRollback:
         # 失敗後はシングルトンがリセットされている
         assert embedding._session is None
         assert embedding._tokenizer is None
+
+
+class TestOnnxCheckerIntegration:
+    """onnx.checker.check_model の統合テスト（Phase 5 LS-2）。"""
+
+    def test_invalid_onnx_resets_singletons(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """onnx.checker が例外を出すとシングルトンが None リセットされる。"""
+        # autouse フィクスチャが _MODELS_DIR を tmp_path/models に設定済みだが、
+        # このテストでは別の model_dir を使う
+        model_dir = tmp_path / "onnx_check_test"
+        _write_fake_model_dir(model_dir)
+        monkeypatch.setattr(embedding, "_MODELS_DIR", model_dir)
+        monkeypatch.setattr(embedding, "_session", None)
+        monkeypatch.setattr(embedding, "_tokenizer", None)
+
+        # onnx.checker.check_model を失敗させるモック
+        def _fail(*_a: object, **_kw: object) -> None:
+            raise RuntimeError("bad onnx")
+
+        mock_onnx = types.SimpleNamespace(
+            checker=types.SimpleNamespace(check_model=_fail)
+        )
+        monkeypatch.setitem(sys.modules, "onnx", mock_onnx)
+
+        with pytest.raises(RuntimeError, match="bad onnx"):
+            embedding.embed(["test"])
+
+        assert embedding._session is None
+        assert embedding._tokenizer is None
+
+    def test_valid_onnx_passes_checker(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """onnx.checker が成功すれば通常の推論フローに進む。"""
+        model_dir = tmp_path / "onnx_pass_test"
+        _write_fake_model_dir(model_dir)
+        monkeypatch.setattr(embedding, "_MODELS_DIR", model_dir)
+        monkeypatch.setattr(embedding, "_session", None)
+        monkeypatch.setattr(embedding, "_tokenizer", None)
+
+        fake_ort = _make_fake_ort(hidden_dim=4)
+        fake_tok = _make_fake_tokenizers(seq_len=8)
+
+        # onnx.checker を no-op に差し替える
+        mock_onnx = types.SimpleNamespace(
+            checker=types.SimpleNamespace(check_model=lambda *_a, **_kw: None)
+        )
+        monkeypatch.setitem(sys.modules, "onnx", mock_onnx)
+        monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", fake_tok)
+
+        result = embedding.embed(["hello"])
+        assert isinstance(result, list)
+        assert len(result) == 1

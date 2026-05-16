@@ -40,10 +40,7 @@ def _verify_model_sha(models_dir: Path) -> None:
     """
     manifest_path = models_dir / "manifest.json"
     if not manifest_path.exists():
-        raise FileNotFoundError(
-            f"manifest.json が見つかりません: {manifest_path}\n"
-            "plugins/devgear/install.sh を実行してモデルを再統合してください。"
-        )
+        raise FileNotFoundError(f"manifest.json が見つかりません: {manifest_path}\nplugins/devgear/install.sh を実行してモデルを再統合してください。")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     expected = manifest["merged_sha256"]
     _validate_sha256_format(expected, "merged_sha256")
@@ -102,6 +99,7 @@ def _get_session() -> tuple[Any, Any]:
                     "plugins/devgear/install.sh を実行してモデルを統合してください。"
                 )
 
+            import onnx  # type: ignore[import-untyped]
             import onnxruntime as ort  # type: ignore[import-untyped]
             from tokenizers import Tokenizer  # type: ignore[import-untyped]
 
@@ -116,7 +114,8 @@ def _get_session() -> tuple[Any, Any]:
                 _verify_model_sha(_MODELS_DIR)
                 _verify_tokenizer(tok_path, _MODELS_DIR)
 
-                # Phase 2: セッション構築
+                # Phase 2: セッション構築（起動前に ONNX 構造を検証して改ざんを早期検知）
+                onnx.checker.check_model(str(model_path))
                 sess_opts = ort.SessionOptions()
                 sess_opts.log_severity_level = 3  # ERROR のみ
                 sess_opts.enable_mem_pattern = False
@@ -184,7 +183,16 @@ def embed(texts: list[str]) -> list[list[float]]:
     return _encode(texts)
 
 
-def embed_query(query: str) -> list[float]:
-    """検索クエリを埋め込みに変換する。ruri-v3 推奨プレフィックスを付与する。"""
+def embed_query(query: str, embedding_model: str) -> list[float]:
+    """検索クエリを埋め込みに変換する。ruri-v3 推奨プレフィックスを付与する。
+
+    embedding_model が既定モデルと異なる場合は警告を出す（ランタイムで差し替え不可）。
+    """
+    if embedding_model != _DEFAULT_EMBEDDING_MODEL:
+        log.warning(
+            "embed_query: embedding_model=%r は既定値 %r と異なります。既定モデルで処理します。",
+            embedding_model,
+            _DEFAULT_EMBEDDING_MODEL,
+        )
     result = _encode([f"検索クエリ: {query}"])
     return result[0]

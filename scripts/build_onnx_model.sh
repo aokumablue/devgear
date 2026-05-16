@@ -89,22 +89,10 @@ fi
 echo "[build] ビルド依存を venv にインストールしています..."
 "${VENV_PYTHON}" -m pip install --quiet --disable-pip-version-check --upgrade pip
 
-# FP16 変換には onnxconverter-common が必要。
-# optimum 2.x では `optimum.exporters.onnx` が分離されたため、ONNX エクスポーターを
-# 含む 1.x 系（最新の 1.24.x）を明示的に指定する。
-# torch は 2.6 以降で `torch.onnx.symbolic_opset14._attention_scale` が削除されており、
-# optimum 1.24 が import に失敗するため `torch<2.6` でピンする。
-# numpy は torch/onnx の互換のため 2.x 未満で固定。
+# ハッシュロックで依存パッケージのレジストリ側改ざんを検知する（LS-1）。
+# 再生成: pip-compile --generate-hashes scripts/requirements-build.in -o scripts/requirements-build.txt
 "${VENV_PYTHON}" -m pip install --quiet --disable-pip-version-check \
-  "torch>=2.2,<2.6" \
-  "transformers>=4.41,<5.0" \
-  "optimum[onnxruntime]>=1.20,<2.0" \
-  "onnx>=1.16,<2" \
-  "onnxruntime>=1.18" \
-  "onnxconverter-common>=1.13" \
-  "tokenizers>=0.20" \
-  "numpy>=1.26,<2.0" \
-  "sentencepiece>=0.2"
+  --require-hashes -r "${SCRIPT_DIR}/requirements-build.txt"
 
 # ---- model_build をビルド venv に追加 ----
 # sys.path に src/ を追加して直接実行（パッケージインストール不要）
@@ -129,7 +117,24 @@ PYTHONPATH="${SRC_DIR}" "${VENV_PYTHON}" -m model_build sources \
 echo ""
 echo "[build] 完了。生成ファイル:"
 ls -lh "${OUT_DIR}"
+SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+TAG_NAME="models/${SHORT_SHA}-${QUANT}"
+
 echo ""
-echo "[build] 次のステップ: 生成されたファイルを git add してコミットしてください。"
-echo "  git add assets/models/ plugins/devgear/model_sources.json"
+echo "[build] 次のステップ: 署名タグを作成してから model_sources.json を生成してください。"
+echo ""
+echo "  # 1. 生成ファイルを commit する（tag 前に commit が必要）"
+echo "  git add assets/models/"
 echo "  git commit -m 'chore: update ONNX model (${QUANT})'"
+echo ""
+echo "  # 2. 署名済み git tag を作成して push する"
+echo "  git tag -s ${TAG_NAME} -m 'Model build ${QUANT}'"
+echo "  git push origin ${TAG_NAME}"
+echo ""
+echo "  # 3. 署名者の GPG 指紋を確認する（gpg --list-keys で確認可）"
+echo "  # 4. model_sources.json を生成する"
+echo "  python3 -m model_build sources \\"
+echo "    --signed-tag ${TAG_NAME} \\"
+echo "    --signer-fingerprint <YOUR_40HEX_KEY_FINGERPRINT>"
+echo "  git add plugins/devgear/model_sources.json"
+echo "  git commit -m 'chore: update model_sources.json with signed tag ${TAG_NAME}'"

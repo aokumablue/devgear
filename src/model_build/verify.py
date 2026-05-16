@@ -148,12 +148,19 @@ def _run_inference_check(
     cosine_threshold: float,
 ) -> None:
     """メモリ上の ONNX バイト列でサンプル推論を実行し、次元・正規化・再現性を検証する。"""
+    import onnx  # type: ignore[import-untyped]
     import onnxruntime as ort  # type: ignore[import-untyped]
     from tokenizers import Tokenizer  # type: ignore[import-untyped]
 
     tokenizer = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
     tokenizer.enable_padding(pad_token="[PAD]", length=manifest["tokenizer_max_length"])
     tokenizer.enable_truncation(max_length=manifest["tokenizer_max_length"])
+
+    # InferenceSession より前に ONNX 構造を検証する（不正モデルの早期検知）
+    try:
+        onnx.checker.check_model(onnx.load_from_string(model_bytes))
+    except Exception as exc:
+        raise ValueError(f"ONNX 構造検証失敗: {exc}") from exc
 
     sess_opts = ort.SessionOptions()
     sess_opts.log_severity_level = 3

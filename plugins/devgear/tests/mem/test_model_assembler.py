@@ -16,6 +16,7 @@ from devgear.mem.model_assembler import (
     _copy_auxiliary,
     _is_already_assembled,
     _load_sources_spec,
+    _make_git_env,
     _mean_pool_l2,
     _merge_and_verify,
     _sanity_inference,
@@ -24,6 +25,7 @@ from devgear.mem.model_assembler import (
     _validate_remote,
     _validate_sparse_path,
     _verify_parts,
+    _verify_signed_tag,
     assemble,
 )
 
@@ -70,13 +72,36 @@ def _make_spec(
     return {
         "schema_version": 1,
         "model_name": "cl-nagoya/ruri-v3-310m",
-        "git_remote": "git@example.com:repo.git",
+        "git_remote": "git@github.com:example/repo.git",
         "git_commit": "a" * 40,
+        "signed_tag": "models/aaaaaaa-fp16",
+        "signer_key_fingerprint": "A" * 40,
         "sparse_paths": ["assets/models"],
         "merged_sha256": merged_sha,
         "parts": parts,
         "auxiliary_files": aux_specs,
     }
+
+
+# ── _make_git_env ─────────────────────────────────────────────────────────────
+
+class TestMakeGitEnv:
+    """_make_git_env のテスト。"""
+
+    def test_gnupghome_set_when_trust_dir_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """~/.devgear/trust/gnupg が存在するとき GNUPGHOME が設定される。"""
+        trust_gnupg = tmp_path / ".devgear" / "trust" / "gnupg"
+        trust_gnupg.mkdir(parents=True)
+        # Path.home() を tmp_path にモンキーパッチする
+        monkeypatch.setattr("devgear.mem.model_assembler.Path.home", lambda: tmp_path)
+        env = _make_git_env()
+        assert env.get("GNUPGHOME") == str(trust_gnupg)
+
+    def test_gnupghome_not_set_when_trust_dir_absent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """~/.devgear/trust/gnupg が存在しないとき GNUPGHOME は設定されない。"""
+        monkeypatch.setattr("devgear.mem.model_assembler.Path.home", lambda: tmp_path)
+        env = _make_git_env()
+        assert "GNUPGHOME" not in env
 
 
 # ── _validate_remote ──────────────────────────────────────────────────────────
@@ -268,6 +293,8 @@ class TestLoadSourcesSpec:
             "schema_version": 1,
             "git_remote": "git@github.com:aokumablue/devgear.git",
             "git_commit": "a" * 40,
+            "signed_tag": "models/aaaaaaa-fp16",
+            "signer_key_fingerprint": "A" * 40,
             "sparse_paths": ["assets/models"],
             "merged_sha256": "a" * 64,
             "parts": [{"name": "model.onnx.part00", "sha256": "a" * 64}],
@@ -277,6 +304,7 @@ class TestLoadSourcesSpec:
     @pytest.mark.parametrize("missing_key", [
         "schema_version", "git_remote", "git_commit", "sparse_paths",
         "merged_sha256", "parts", "auxiliary_files",
+        "signed_tag", "signer_key_fingerprint",
     ])
     def test_missing_required_key_raises(self, tmp_path: Path, missing_key: str) -> None:
         """必須キーが欠落すると ValueError。"""
@@ -326,6 +354,37 @@ class TestLoadSourcesSpec:
         f.write_text(json.dumps(spec))
         result = _load_sources_spec(f)
         assert result["schema_version"] == 1
+
+    @pytest.mark.parametrize("invalid_tag", [
+        "invalid-tag",
+        "models/aaaaaaa",
+        "models/aaaaaaa-invalid_quant",
+        "refs/tags/models/aaaaaaa-fp16",
+    ])
+    def test_invalid_signed_tag_format_raises(self, tmp_path: Path, invalid_tag: str) -> None:
+        """signed_tag の形式が不正なら ValueError。"""
+        spec = self._base_spec()
+        spec["signed_tag"] = invalid_tag
+        f = tmp_path / "model_sources.json"
+        f.write_text(json.dumps(spec))
+        with pytest.raises(ValueError, match="signed_tag"):
+            _load_sources_spec(f)
+
+    @pytest.mark.parametrize("invalid_fp", [
+        "abc",
+        "a" * 40,        # 小文字（大文字のみ有効）
+        "Z" * 40,        # 非 hex 文字
+        "A" * 39,        # 39 桁
+        "A" * 41,        # 41 桁
+    ])
+    def test_invalid_fingerprint_format_raises(self, tmp_path: Path, invalid_fp: str) -> None:
+        """signer_key_fingerprint の形式が不正なら ValueError。"""
+        spec = self._base_spec()
+        spec["signer_key_fingerprint"] = invalid_fp
+        f = tmp_path / "model_sources.json"
+        f.write_text(json.dumps(spec))
+        with pytest.raises(ValueError, match="signer_key_fingerprint"):
+            _load_sources_spec(f)
 
 
 # ── _verify_parts ─────────────────────────────────────────────────────────────
@@ -505,13 +564,24 @@ class TestCopyAuxiliary:
 class TestSparseCheckout:
     """_sparse_checkout の subprocess 呼び出しをモックして検証する。"""
 
-    def test_calls_git_clone(self, tmp_path: Path) -> None:
-        """subprocess.run が git clone を呼び出す。"""
-        spec = {
+    # _verify_signed_tag をスキップするために署名検証を無効化する
+    @pytest.fixture(autouse=True)
+    def skip_signature_verify(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """各テストで署名検証をスキップする（git tag 署名検証は TestVerifySignedTag で個別にテスト）。"""
+        monkeypatch.setenv("DEVGEAR_SKIP_SIGNATURE_VERIFY", "1")
+
+    def _base_spec(self) -> dict:
+        return {
             "git_remote": "git@github.com:aokumablue/devgear.git",
             "git_commit": "a" * 40,
+            "signed_tag": "models/aaaaaaa-fp16",
+            "signer_key_fingerprint": "A" * 40,
             "sparse_paths": ["assets/models"],
         }
+
+    def test_calls_git_clone(self, tmp_path: Path) -> None:
+        """subprocess.run が git clone を呼び出す。"""
+        spec = self._base_spec()
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
@@ -525,11 +595,7 @@ class TestSparseCheckout:
 
     def test_protocol_allowlist_in_argv(self, tmp_path: Path) -> None:
         """全 git 呼び出しに protocol.ext.allow=never が含まれる。"""
-        spec = {
-            "git_remote": "git@github.com:aokumablue/devgear.git",
-            "git_commit": "a" * 40,
-            "sparse_paths": ["assets/models"],
-        }
+        spec = self._base_spec()
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
@@ -541,21 +607,15 @@ class TestSparseCheckout:
 
     def test_invalid_remote_raises(self, tmp_path: Path) -> None:
         """許可リスト外の git_remote は ValueError。"""
-        spec = {
-            "git_remote": "https://evil.example.com/repo.git",
-            "git_commit": "a" * 40,
-            "sparse_paths": ["assets/models"],
-        }
+        spec = self._base_spec()
+        spec["git_remote"] = "https://evil.example.com/repo.git"
         with pytest.raises(ValueError, match="許可されていない"):
             _sparse_checkout(spec, tmp_path)
 
     def test_uses_env_override(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """DEVGEAR_TESTING=1 のとき DEVGEAR_MODEL_REMOTE が優先される。"""
-        spec = {
-            "git_remote": "git@github.com:aokumablue/devgear.git",
-            "git_commit": "b" * 40,
-            "sparse_paths": ["assets/models"],
-        }
+        spec = self._base_spec()
+        spec["git_commit"] = "b" * 40
         override = "git@github.com:aokumablue/override.git"
 
         monkeypatch.setenv("DEVGEAR_TESTING", "1")
@@ -573,11 +633,8 @@ class TestSparseCheckout:
 
     def test_env_override_ignored_without_testing_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """DEVGEAR_TESTING=1 なしでは DEVGEAR_MODEL_REMOTE が無視され spec の remote が使われる。"""
-        spec = {
-            "git_remote": "git@github.com:aokumablue/devgear.git",
-            "git_commit": "b" * 40,
-            "sparse_paths": ["assets/models"],
-        }
+        spec = self._base_spec()
+        spec["git_commit"] = "b" * 40
         override = "git@github.com:aokumablue/override.git"
 
         monkeypatch.delenv("DEVGEAR_TESTING", raising=False)
@@ -594,11 +651,7 @@ class TestSparseCheckout:
 
     def test_invalid_env_override_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """DEVGEAR_TESTING=1 時に許可リスト外の DEVGEAR_MODEL_REMOTE は ValueError。"""
-        spec = {
-            "git_remote": "git@github.com:aokumablue/devgear.git",
-            "git_commit": "a" * 40,
-            "sparse_paths": ["assets/models"],
-        }
+        spec = self._base_spec()
         monkeypatch.setenv("DEVGEAR_TESTING", "1")
         monkeypatch.delenv("DEVGEAR_MODEL_REMOTE", raising=False)
         monkeypatch.setenv("DEVGEAR_MODEL_REMOTE", "ext::sh -c 'echo PWN'")
@@ -610,16 +663,112 @@ class TestSparseCheckout:
         """git コマンド失敗時に stderr をログに出力し CalledProcessError を再 raise する。"""
         import subprocess
 
-        spec = {
-            "git_remote": "git@github.com:aokumablue/devgear.git",
-            "git_commit": "a" * 40,
-            "sparse_paths": ["assets/models"],
-        }
+        spec = self._base_spec()
 
         err = subprocess.CalledProcessError(1, ["git"], stderr=b"fatal: repository not found")
         with patch("subprocess.run", side_effect=err):
             with pytest.raises(subprocess.CalledProcessError):
                 _sparse_checkout(spec, tmp_path)
+
+
+# ── _verify_signed_tag ───────────────────────────────────────────────────────
+
+class TestVerifySignedTag:
+    """_verify_signed_tag の git 署名検証テスト（subprocess モック）。"""
+
+    def _base_spec(self) -> dict:
+        return {
+            "signed_tag": "models/aaaaaaa-fp16",
+            "signer_key_fingerprint": "A" * 40,
+            "git_commit": "a" * 40,
+        }
+
+    def _make_git_env(self) -> dict:
+        return {}
+
+    def _validsig_stderr(self, fp: str, commit: str) -> bytes:
+        """git verify-tag --raw 成功時の stderr 形式を模倣する。"""
+        return (
+            f"[GNUPG:] GOODSIG DEADBEEF Maintainer <key@example.com>\n"
+            f"[GNUPG:] VALIDSIG {fp} 2024-01-01 1234567890\n"
+            f"[GNUPG:] TRUST_ULTIMATE 0 pgp\n"
+        ).encode()
+
+    def test_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """VALIDSIG + 指紋一致 + commit 一致 → 例外なし。"""
+        spec = self._base_spec()
+        fp = "A" * 40
+        commit = "a" * 40
+
+        with patch("subprocess.run") as mock_run:
+            # fetch
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stderr=b"", stdout=b""),  # fetch
+                MagicMock(returncode=0, stderr=self._validsig_stderr(fp, commit), stdout=b""),  # verify-tag
+                MagicMock(returncode=0, stderr=b"", stdout=(commit + "\n").encode()),  # rev-list
+            ]
+            _verify_signed_tag(spec, "/fake/clone", self._make_git_env())
+
+    def test_unsigned_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """verify-tag 戻り値非 0 → ValueError("tag 署名検証失敗")。"""
+        spec = self._base_spec()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stderr=b"", stdout=b""),  # fetch
+                MagicMock(returncode=1, stderr=b"error: not signed", stdout=b""),  # verify-tag
+            ]
+            with pytest.raises(ValueError, match="tag 署名検証失敗"):
+                _verify_signed_tag(spec, "/fake/clone", self._make_git_env())
+
+    def test_no_validsig_line_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """verify-tag が成功するが VALIDSIG 行なし → ValueError("鍵指紋を抽出できません")。"""
+        spec = self._base_spec()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stderr=b"", stdout=b""),  # fetch
+                MagicMock(returncode=0, stderr=b"[GNUPG:] GOODSIG\n", stdout=b""),  # verify-tag（VALIDSIG なし）
+            ]
+            with pytest.raises(ValueError, match="鍵指紋を抽出できません"):
+                _verify_signed_tag(spec, "/fake/clone", self._make_git_env())
+
+    def test_fingerprint_mismatch_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """VALIDSIG があるが指紋不一致 → ValueError("鍵指紋不一致")。"""
+        spec = self._base_spec()
+        wrong_fp = "B" * 40  # spec は "A" * 40
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stderr=b"", stdout=b""),  # fetch
+                MagicMock(returncode=0, stderr=self._validsig_stderr(wrong_fp, "a" * 40), stdout=b""),  # verify-tag
+            ]
+            with pytest.raises(ValueError, match="鍵指紋不一致"):
+                _verify_signed_tag(spec, "/fake/clone", self._make_git_env())
+
+    def test_commit_mismatch_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """指紋一致でも tag が指す commit が spec と異なる → ValueError("tag commit 不一致")。"""
+        spec = self._base_spec()
+        fp = "A" * 40
+        wrong_commit = "b" * 40  # spec は "a" * 40
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stderr=b"", stdout=b""),  # fetch
+                MagicMock(returncode=0, stderr=self._validsig_stderr(fp, "a" * 40), stdout=b""),  # verify-tag
+                MagicMock(returncode=0, stderr=b"", stdout=(wrong_commit + "\n").encode()),  # rev-list
+            ]
+            with pytest.raises(ValueError, match="tag commit 不一致"):
+                _verify_signed_tag(spec, "/fake/clone", self._make_git_env())
+
+    def test_skip_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """DEVGEAR_SKIP_SIGNATURE_VERIFY=1 で subprocess を呼ばずに return する。"""
+        spec = self._base_spec()
+        monkeypatch.setenv("DEVGEAR_SKIP_SIGNATURE_VERIFY", "1")
+
+        with patch("subprocess.run") as mock_run:
+            _verify_signed_tag(spec, "/fake/clone", self._make_git_env())
+            mock_run.assert_not_called()
 
 
 # ── _sanity_inference（ORT モック）──────────────────────────────────────────

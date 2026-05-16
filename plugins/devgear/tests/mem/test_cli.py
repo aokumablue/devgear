@@ -550,3 +550,49 @@ class TestSessionInitPgIntegration:
         payload = json.loads(stdout)
         assert payload["hookEventName"] == "UserPromptSubmit"
         assert "fallback work" in payload["additionalContext"]
+
+
+class TestMainExitCode:
+    """main() が例外発生時に exit_code=1 を返すことを確認する。"""
+
+    def test_settings_load_failure_returns_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_load_settings_or_raise が例外を送出すると exit_code=1 を返す。"""
+        monkeypatch.setattr(sys, "argv", ["python", "context"])
+        monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+        monkeypatch.setattr(
+            cli, "_load_settings_or_raise", lambda: (_ for _ in ()).throw(RuntimeError("設定失敗"))
+        )
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            result = cli.main()
+        assert result == 1
+        assert "設定/ログ初期化失敗" in stderr.getvalue()
+
+    def test_command_exception_returns_1(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """_run_normal_command が例外を送出すると exit_code=1 を返す。"""
+        import devgear.mem.settings as settings_mod
+        monkeypatch.setattr(settings_mod, "_DEFAULT_DATA_DIR", tmp_path)
+        # "search" は _run_normal_command 経由（_SESSION_START_COMMANDS 外）
+        monkeypatch.setattr(sys, "argv", ["python", "search"])
+        monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+        monkeypatch.setattr(
+            cli, "_run_normal_command", lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("コマンド失敗"))
+        )
+        result = cli.main()
+        assert result == 1
+
+    def test_session_start_command_success_returns_0(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """SESSION_START_COMMANDS 例外でも _SESSION_START_COMMANDS 経路は exit_code=0 を維持する。"""
+        import devgear.mem.settings as settings_mod
+        monkeypatch.setattr(settings_mod, "_DEFAULT_DATA_DIR", tmp_path)
+        monkeypatch.setattr(sys, "argv", ["python", "session-init"])
+        monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+        monkeypatch.setattr(
+            cli, "_run_session_start_command", lambda *_a, **_kw: ""
+        )
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            result = cli.main()
+        assert result == 0

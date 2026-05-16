@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from model_build.verify import (
@@ -11,6 +12,7 @@ from model_build.verify import (
     _check_l2_norm,
     _check_reproducibility,
     _cosine_similarity,
+    _run_inference_check,
 )
 
 
@@ -113,3 +115,39 @@ class TestCheckReproducibility:
 
         with pytest.raises(ValueError, match="再現性チェック失敗"):
             _check_reproducibility(session, tokenizer, "text", ref_vec, threshold=0.999)
+
+
+class TestRunInferenceCheckOnnxChecker:
+    """_run_inference_check の onnx.checker 検証テスト。"""
+
+    def _make_tokenizer_json(self, tmp_path: Path) -> None:
+        """テスト用 tokenizer.json を tmp_path に生成する。"""
+        from tokenizers import Tokenizer  # type: ignore[import-untyped]
+        from tokenizers.models import BPE  # type: ignore[import-untyped]
+
+        tok = Tokenizer(BPE())
+        tok.save(str(tmp_path / "tokenizer.json"))
+
+    def test_invalid_onnx_raises_value_error(self, tmp_path: Path) -> None:
+        """不正 ONNX バイナリで onnx.checker が例外を出すと ValueError になる。"""
+        self._make_tokenizer_json(tmp_path)
+        model_bytes = b"invalid_onnx_bytes"
+        manifest = {"tokenizer_max_length": 512, "embedding_dim": 768}
+
+        with pytest.raises(ValueError, match="ONNX 構造検証失敗"):
+            _run_inference_check(model_bytes, tmp_path, manifest, cosine_threshold=0.999)
+
+    def test_check_model_exception_is_wrapped(self, tmp_path: Path) -> None:
+        """onnx.checker.check_model の任意例外が ValueError でラップされる。"""
+        self._make_tokenizer_json(tmp_path)
+        model_bytes = b"any_bytes"
+        manifest = {"tokenizer_max_length": 512, "embedding_dim": 768}
+
+        # 関数内 import の onnx を sys.modules 経由で差し替える
+        import sys
+        mock_onnx = MagicMock()
+        mock_onnx.load_from_string.return_value = MagicMock()
+        mock_onnx.checker.check_model.side_effect = RuntimeError("bad model")
+        with patch.dict(sys.modules, {"onnx": mock_onnx}):
+            with pytest.raises(ValueError, match="ONNX 構造検証失敗"):
+                _run_inference_check(model_bytes, tmp_path, manifest, cosine_threshold=0.999)

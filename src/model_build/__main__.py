@@ -144,15 +144,26 @@ def _get_git_head() -> str:
     return result.stdout.strip()
 
 
+def _validate_fingerprint(value: str) -> str:
+    """GPG 鍵指紋が 40 桁大文字 hex であることを検証して返す。"""
+    import re
+    if not re.match(r"^[0-9A-F]{40}$", value.upper()):
+        raise argparse.ArgumentTypeError(f"signer-fingerprint は 40 桁大文字 hex が必要: '{value}'")
+    return value.upper()
+
+
 def _cmd_sources(args: argparse.Namespace) -> None:
     """manifest.json + git HEAD から model_sources.json を生成する。
 
     生成された JSON は install 時の git sparse-checkout 仕様として使用される。
     git_commit は現在の HEAD をピン留めし、サプライチェーン攻撃に耐性を持つ。
+    signed_tag / signer_key_fingerprint で git tag 署名による信頼境界を確立する。
     """
     model_dir: Path = args.model_dir
     out_path: Path = args.out
     git_remote: str = args.git_remote
+    signed_tag: str = args.signed_tag
+    signer_fingerprint: str = args.signer_fingerprint
 
     manifest_path = model_dir / "manifest.json"
     if not manifest_path.exists():
@@ -165,11 +176,22 @@ def _cmd_sources(args: argparse.Namespace) -> None:
     # assets/models への sparse path（リポルートからの相対パス）
     sparse_path = "assets/models"
 
+    import hashlib
+
+    # manifest.json 自身の SHA256 を計算して auxiliary_files に追加する（多層防御）
+    manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    auxiliary_files = [
+        {"name": "manifest.json", "sha256": manifest_sha256},
+        *manifest["auxiliary_files"],
+    ]
+
     sources = {
         "schema_version": 1,
         "model_name": manifest["model_name"],
         "git_remote": git_remote,
         "git_commit": git_commit,
+        "signed_tag": signed_tag,
+        "signer_key_fingerprint": signer_fingerprint,
         "sparse_paths": [sparse_path],
         "manifest_relpath": f"{sparse_path}/manifest.json",
         "merged_sha256": manifest["merged_sha256"],
@@ -177,13 +199,14 @@ def _cmd_sources(args: argparse.Namespace) -> None:
             {"name": p["name"], "sha256": p["sha256"]}
             for p in manifest["parts"]
         ],
-        "auxiliary_files": manifest["auxiliary_files"],
+        "auxiliary_files": auxiliary_files,
     }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(sources, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"[sources] 生成: {out_path}", flush=True)
     print(f"[sources] git_commit: {git_commit}", flush=True)
+    print(f"[sources] signed_tag: {signed_tag}", flush=True)
 
 
 def main() -> None:
@@ -244,6 +267,19 @@ def main() -> None:
         "--git-remote",
         default=_default_git_remote(),
         help="git remote URL (default: git remote get-url origin)",
+    )
+    p_sources.add_argument(
+        "--signed-tag",
+        required=True,
+        dest="signed_tag",
+        help="署名済み git tag 名 (例: models/a2f9ac6-fp16)",
+    )
+    p_sources.add_argument(
+        "--signer-fingerprint",
+        required=True,
+        dest="signer_fingerprint",
+        type=_validate_fingerprint,
+        help="署名者 GPG 鍵指紋 (40 桁大文字 hex)",
     )
 
     args = parser.parse_args()

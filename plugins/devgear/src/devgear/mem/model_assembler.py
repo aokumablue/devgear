@@ -49,11 +49,16 @@ def _make_git_env() -> dict:
     if not Path(askpass).exists():  # pragma: no cover
         found = shutil.which("true")
         askpass = found if found else askpass
-    return {
+    env = {
         **os.environ,
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_ASKPASS": askpass,
     }
+    # ~/.devgear/trust/gnupg が存在すれば信頼鍵ストアとして指定する
+    trust_gpg = Path.home() / ".devgear" / "trust" / "gnupg"
+    if trust_gpg.exists():
+        env["GNUPGHOME"] = str(trust_gpg)
+    return env
 
 
 def _validate_remote(remote: str) -> None:
@@ -87,7 +92,16 @@ def _git(*args: str) -> list[str]:
     return ["git"] + _GIT_SAFE_FLAGS + list(args)
 
 
-_REQUIRED_SPEC_KEYS = ("schema_version", "git_remote", "git_commit", "sparse_paths", "merged_sha256", "parts", "auxiliary_files")
+_REQUIRED_SPEC_KEYS = (
+    "schema_version", "git_remote", "git_commit", "sparse_paths",
+    "merged_sha256", "parts", "auxiliary_files",
+    "signed_tag", "signer_key_fingerprint",
+)
+
+# signed_tag: models/<7-40hex>-<quant>
+_SIGNED_TAG_RE = re.compile(r"^models/[0-9a-f]{7,40}-(fp32|fp16|int8)$")
+# signer_key_fingerprint: 40 桁大文字 hex（GPG long key fingerprint）
+_FINGERPRINT_RE = re.compile(r"^[0-9A-F]{40}$")
 
 
 def _load_sources_spec(sources_json: Path) -> dict:
@@ -104,6 +118,10 @@ def _load_sources_spec(sources_json: Path) -> dict:
         raise ValueError("model_sources.json の 'parts' が空です")
     if not spec["sparse_paths"]:
         raise ValueError("model_sources.json の 'sparse_paths' が空です")
+    if not _SIGNED_TAG_RE.match(spec["signed_tag"]):
+        raise ValueError(f"signed_tag の形式が不正: '{spec['signed_tag']}'")
+    if not _FINGERPRINT_RE.match(spec["signer_key_fingerprint"]):
+        raise ValueError(f"signer_key_fingerprint の形式が不正: '{spec['signer_key_fingerprint']}'")
     return spec
 
 
@@ -119,6 +137,53 @@ def _is_already_assembled(target_dir: Path, spec: dict) -> bool:
         return False
     actual = _sha256_path(model_path)
     return hmac.compare_digest(actual, expected)
+
+
+def _verify_signed_tag(spec: dict, clone_dir_str: str, git_env: dict) -> None:
+    """git tag 署名と鍵指紋を検証する。
+
+    DEVGEAR_SKIP_SIGNATURE_VERIFY=1 が設定されている場合のみスキップ（CI/開発用・本番禁止）。
+    """
+    if os.environ.get("DEVGEAR_SKIP_SIGNATURE_VERIFY") == "1":
+        log.warning("DEVGEAR_SKIP_SIGNATURE_VERIFY=1: 署名検証をスキップします（本番禁止）")
+        return
+
+    signed_tag: str = spec["signed_tag"]
+    expected_fp: str = spec["signer_key_fingerprint"]
+    commit: str = spec["git_commit"]
+
+    # tag を fetch する
+    subprocess.run(
+        _git("-C", clone_dir_str, "fetch", "--depth=1", "origin", "tag", signed_tag),
+        check=True, capture_output=True, env=git_env,
+    )
+
+    # 署名検証（--raw で機械可読 GNUPG status を stderr に出力）
+    result = subprocess.run(
+        _git("-C", clone_dir_str, "verify-tag", "--raw", signed_tag),
+        check=False, capture_output=True, env=git_env,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"tag 署名検証失敗: {signed_tag}")
+
+    # "[GNUPG:] VALIDSIG <fingerprint> ..." 行から指紋を抽出する
+    actual_fp = ""
+    for line in result.stderr.decode("utf-8", errors="replace").splitlines():
+        if line.startswith("[GNUPG:] VALIDSIG "):
+            actual_fp = line.split()[2]
+            break
+    if not actual_fp:
+        raise ValueError(f"tag 署名から鍵指紋を抽出できません: {signed_tag}")
+    if not hmac.compare_digest(actual_fp.upper(), expected_fp.upper()):
+        raise ValueError(f"鍵指紋不一致: expected={expected_fp} actual={actual_fp}")
+
+    # tag が指す commit が spec.git_commit と一致するか確認する
+    tag_commit = subprocess.run(
+        _git("-C", clone_dir_str, "rev-list", "-n", "1", signed_tag),
+        check=True, capture_output=True, env=git_env,
+    ).stdout.decode("utf-8").strip()
+    if not hmac.compare_digest(tag_commit, commit):
+        raise ValueError(f"tag commit 不一致: tag={tag_commit} spec={commit}")
 
 
 def _sparse_checkout(spec: dict, work_dir: Path) -> Path:
@@ -165,6 +230,9 @@ def _sparse_checkout(spec: dict, work_dir: Path) -> Path:
 
     # クローン（blob なし、depth=1、チェックアウトなし）
     _run("clone", "--filter=blob:none", "--no-checkout", "--depth=1", "--sparse", remote, clone_dir_str)
+
+    # git tag 署名を検証する（サプライチェーン信頼境界の確立）
+    _verify_signed_tag(spec, clone_dir_str, git_env)
 
     # sparse-checkout を cone モードで設定
     _run("-C", clone_dir_str, "sparse-checkout", "init", "--cone")

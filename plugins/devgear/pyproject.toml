@@ -21,6 +21,8 @@ dependencies = [
     "pydantic>=2.0",
     # ONNX Runtime: pickle 非依存・trust_remote_code 不要・CVE-2025-32434 攻撃面ゼロ
     "onnxruntime>=1.18",
+    # ONNX モデル構造検証（InferenceSession 起動前の改ざん検知）
+    "onnx>=1.16,<2",
     # Rust 実装の高速トークナイザ（sentence-transformers / torch 不要）
     "tokenizers>=0.20",
     "sqlite-vec>=0.1",

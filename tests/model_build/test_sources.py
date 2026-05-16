@@ -40,9 +40,17 @@ def _make_args(
     model_dir: Path,
     out: Path,
     git_remote: str = "git@github.com:example/repo.git",
+    signed_tag: str = "models/aaaaaaa-fp16",
+    signer_fingerprint: str = "A" * 40,
 ) -> argparse.Namespace:
     """argparse.Namespace を返す。"""
-    return argparse.Namespace(model_dir=model_dir, out=out, git_remote=git_remote)
+    return argparse.Namespace(
+        model_dir=model_dir,
+        out=out,
+        git_remote=git_remote,
+        signed_tag=signed_tag,
+        signer_fingerprint=signer_fingerprint,
+    )
 
 
 _FAKE_SHA = "a" * 40
@@ -168,3 +176,32 @@ class TestCmdSources:
 
         data = json.loads(out.read_text(encoding="utf-8"))
         assert "assets/models" in data["sparse_paths"]
+
+    def test_sources_auxiliary_files_contains_manifest_json_with_sha(self, tmp_path: Path) -> None:
+        """auxiliary_files に manifest.json の SHA256 が含まれる（多層防御）。"""
+        import hashlib
+
+        manifest_path = _make_manifest(tmp_path)
+        out = tmp_path / "model_sources.json"
+        expected_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.stdout = _FAKE_SHA + "\n"
+            _cmd_sources(_make_args(tmp_path, out))
+
+        data = json.loads(out.read_text(encoding="utf-8"))
+        aux_names = {a["name"]: a.get("sha256") for a in data["auxiliary_files"]}
+        assert "manifest.json" in aux_names, "manifest.json が auxiliary_files に含まれていない"
+        assert aux_names["manifest.json"] == expected_sha, "manifest.json の SHA256 が一致しない"
+
+    def test_sources_auxiliary_files_manifest_is_first(self, tmp_path: Path) -> None:
+        """auxiliary_files の先頭が manifest.json である（優先順位）。"""
+        _make_manifest(tmp_path)
+        out = tmp_path / "model_sources.json"
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.stdout = _FAKE_SHA + "\n"
+            _cmd_sources(_make_args(tmp_path, out))
+
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data["auxiliary_files"][0]["name"] == "manifest.json"

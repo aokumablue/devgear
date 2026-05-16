@@ -1,0 +1,7 @@
+# Runtime dependencies for plugins/devgear/install.sh
+# Regenerate: pip-compile --generate-hashes plugins/devgear/requirements.in -o plugins/devgear/requirements.txt
+onnxruntime>=1.18
+onnx>=1.16,<2
+tokenizers>=0.20
+pyyaml>=6.0
+psycopg[binary]>=3.1

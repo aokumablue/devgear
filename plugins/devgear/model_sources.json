@@ -3,6 +3,8 @@
   "model_name": "cl-nagoya/ruri-v3-310m",
   "git_remote": "git@github.com:aokumablue/devgear.git",
   "git_commit": "a2f9ac629be7c5391b6ad13e1cb348622bd8a9f0",
+  "signed_tag": "models/a2f9ac6-fp16",
+  "signer_key_fingerprint": "0000000000000000000000000000000000000000",
   "sparse_paths": [
     "assets/models"
   ],
@@ -67,6 +69,10 @@
     }
   ],
   "auxiliary_files": [
+    {
+      "name": "manifest.json",
+      "sha256": "a3bffc853d0b65768d8185007bb6ddc8e7365bb77bbcdcd523b6e864103ae82d"
+    },
     {
       "name": "tokenizer.json",
       "sha256": "0a94ac9a0a02c067bdef25b72ae9f4ee33f48f552e55988d444f6d25eeb1d062"
