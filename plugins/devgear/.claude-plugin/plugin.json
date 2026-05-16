@@ -18,7 +18,21 @@
     "plugin"
   ],
   "agents": [
-    "./agents/"
+    "./agents/a-analyzer.md",
+    "./agents/a-arch.md",
+    "./agents/a-clean.md",
+    "./agents/a-comparator.md",
+    "./agents/a-explore.md",
+    "./agents/a-grader.md",
+    "./agents/a-harness.md",
+    "./agents/a-observer.md",
+    "./agents/a-perf.md",
+    "./agents/a-plan.md",
+    "./agents/a-reforch.md",
+    "./agents/a-review.md",
+    "./agents/a-secure.md",
+    "./agents/a-simplify.md",
+    "./agents/a-tdd.md"
   ],
   "skills": [
     "./skills/"
