@@ -41,7 +41,7 @@ def detect_repeated_patterns(
               FROM jsonb_array_elements_text(tool_names::jsonb) AS t
             ) AS tool_combo
           FROM memory_chunks
-          WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - INTERVAL '%s days')
+          WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - %s * INTERVAL '1 day')
             AND tool_names IS NOT NULL AND tool_names != 'null' AND tool_names != '[]'
         )
         SELECT
@@ -108,7 +108,7 @@ def detect_skill_gaps(
           ARRAY_AGG(DISTINCT origin_user) AS users,
           MAX(user_prompt) AS sample_prompt
         FROM memory_chunks
-        WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - INTERVAL '%s days')
+        WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - %s * INTERVAL '1 day')
           AND user_prompt IS NOT NULL AND user_prompt != ''
           AND LENGTH(user_prompt) > 10
         GROUP BY prompt_key
@@ -164,7 +164,7 @@ def analyze_skill_usage(
           AVG(access_count) AS avg_access_count,
           MAX(created_at_epoch) AS last_used_epoch
         FROM memory_chunks
-        WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - INTERVAL '%s days')
+        WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - %s * INTERVAL '1 day')
           AND (
             LOWER(user_prompt) LIKE LOWER(%s)
             OR LOWER(content) LIKE LOWER(%s)
@@ -189,7 +189,7 @@ def analyze_skill_usage(
                 """
         SELECT DATE(TO_TIMESTAMP(created_at_epoch)) AS day, COUNT(*) AS uses
         FROM memory_chunks
-        WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - INTERVAL '%s days')
+        WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - %s * INTERVAL '1 day')
           AND (
             LOWER(user_prompt) LIKE LOWER(%s)
             OR LOWER(content) LIKE LOWER(%s)
@@ -242,7 +242,7 @@ def suggest_skill_improvements(
         WITH skill_sessions AS (
           SELECT DISTINCT session_id
           FROM memory_chunks
-          WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - INTERVAL '%s days')
+          WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - %s * INTERVAL '1 day')
             AND (
               LOWER(user_prompt) LIKE LOWER(%s)
               OR LOWER(content) LIKE LOWER(%s)
@@ -272,7 +272,7 @@ def suggest_skill_improvements(
         WITH skill_sessions AS (
           SELECT DISTINCT session_id
           FROM memory_chunks
-          WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - INTERVAL '%s days')
+          WHERE created_at_epoch > EXTRACT(EPOCH FROM NOW() - %s * INTERVAL '1 day')
             AND (
               LOWER(user_prompt) LIKE LOWER(%s)
               OR LOWER(content) LIKE LOWER(%s)

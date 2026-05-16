@@ -38,6 +38,22 @@ CREATE INDEX IF NOT EXISTS idx_chunks_project ON memory_chunks(project);
 CREATE INDEX IF NOT EXISTS idx_chunks_epoch ON memory_chunks(created_at_epoch);
 CREATE INDEX IF NOT EXISTS idx_chunks_content_trgm ON memory_chunks USING gin (content gin_trgm_ops);
 
+-- RLS: 自ユーザーのチャンクのみアクセス可能にする
+ALTER TABLE memory_chunks ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'memory_chunks' AND policyname = 'chunks_owner_policy'
+  ) THEN
+    EXECUTE $policy$
+      CREATE POLICY chunks_owner_policy ON memory_chunks
+        USING (origin_user = current_user)
+    $policy$;
+  END IF;
+END $$;
+
 -- sessions テーブル
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -192,11 +208,41 @@ CREATE INDEX IF NOT EXISTS idx_mir_outcome ON mem_item_runs(outcome, created_at_
 CREATE INDEX IF NOT EXISTS idx_mir_item_type ON mem_item_runs(item_type);
 
 -- ベクトル検索テーブル（pgvector 拡張を有効にする必要がある）
+-- セキュリティ: 埋め込み反転攻撃（Vec2Text）対策として行レベルセキュリティ（RLS）を有効化する。
+-- 768 次元ベクトルから元テキストが ~92% 復元可能なため、原文と同等の機密扱いとする。
 CREATE TABLE IF NOT EXISTS memory_chunks_vec (
   chunk_id TEXT PRIMARY KEY REFERENCES memory_chunks(id),
   embedding vector(768)
 );
 CREATE INDEX IF NOT EXISTS idx_vec_embedding ON memory_chunks_vec USING ivfflat (embedding vector_l2_ops);
+
+-- RLS: 自ユーザーが書き込んだチャンクのベクトルのみ参照可能にする
+ALTER TABLE memory_chunks_vec ENABLE ROW LEVEL SECURITY;
+
+-- 既存ポリシーの重複定義を防ぐ
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'memory_chunks_vec' AND policyname = 'vec_owner_policy'
+  ) THEN
+    EXECUTE $policy$
+      CREATE POLICY vec_owner_policy ON memory_chunks_vec
+        USING (
+          chunk_id IN (
+            SELECT id FROM memory_chunks WHERE origin_user = current_user
+          )
+        )
+    $policy$;
+  END IF;
+END $$;
+
+-- スーパーユーザーは RLS をバイパスできるため、通常の app ロールには BYPASSRLS を与えない。
+-- pg_dump / COPY による全件エクスポートは管理者ロールのみ許可する。
+-- 監査: log_statement = 'mod' を postgresql.conf で設定し、変更操作を記録する。
+-- PUBLIC からアクセスを剥奪して RLS を実効化する（<app_role> は実際のロール名に差し替えること）
+REVOKE ALL ON memory_chunks_vec FROM PUBLIC;
+-- GRANT SELECT ON memory_chunks_vec TO <app_role>;
 
 -- 完了メッセージ
 DO $$

@@ -1,0 +1,455 @@
+"""model_assembler のユニットテスト（ネットワーク不要）。"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from devgear.mem.model_assembler import (
+    _copy_auxiliary,
+    _is_already_assembled,
+    _merge_and_verify,
+    _safe_join,
+    _sanity_inference,
+    _sparse_checkout,
+    _validate_sha256_format,
+    _verify_parts,
+    assemble,
+)
+
+# ── ヘルパー ──────────────────────────────────────────────────────────────────
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _make_parts(model_src: Path, parts_data: list[bytes]) -> list[dict]:
+    """model_src に part ファイルを作成し、parts spec を返す。"""
+    parts = []
+    for i, data in enumerate(parts_data):
+        name = f"model.onnx.part{i:02d}"
+        (model_src / name).write_bytes(data)
+        parts.append({"name": name, "sha256": _sha256(data)})
+    return parts
+
+
+def _make_spec(
+    model_src: Path,
+    parts_data: list[bytes],
+    *,
+    aux_files: dict[str, bytes] | None = None,
+) -> dict:
+    """テスト用 spec dict を生成する。aux_files: {name: bytes}"""
+    parts = _make_parts(model_src, parts_data)
+    merged = b"".join(parts_data)
+    merged_sha = _sha256(merged)
+
+    aux_files = aux_files or {
+        "tokenizer.json": b'{"type":"fake"}',
+        "config.json": b'{"dim":768}',
+    }
+    aux_specs = []
+    for name, data in aux_files.items():
+        (model_src / name).write_bytes(data)
+        aux_specs.append({"name": name, "sha256": _sha256(data)})
+
+    # manifest.json も配置（コピー元）
+    manifest_data = json.dumps({"quantization": "fp16"}).encode()
+    (model_src / "manifest.json").write_bytes(manifest_data)
+
+    return {
+        "schema_version": 1,
+        "model_name": "cl-nagoya/ruri-v3-310m",
+        "git_remote": "git@example.com:repo.git",
+        "git_commit": "a" * 40,
+        "sparse_paths": ["assets/models/ruri-v3-310m"],
+        "merged_sha256": merged_sha,
+        "parts": parts,
+        "auxiliary_files": aux_specs,
+    }
+
+
+# ── _validate_sha256_format ────────────────────────────────────────────────────
+
+class TestValidateSha256Format:
+    """_validate_sha256_format のテスト。"""
+
+    def test_valid_sha(self) -> None:
+        """有効な SHA256 は例外なし。"""
+        _validate_sha256_format("a" * 64, "test")
+
+    def test_too_short_raises(self) -> None:
+        """短すぎる文字列は ValueError。"""
+        with pytest.raises(ValueError, match="不正な SHA256"):
+            _validate_sha256_format("a" * 63, "test")
+
+    def test_invalid_chars_raises(self) -> None:
+        """16進数以外の文字は ValueError。"""
+        with pytest.raises(ValueError, match="不正な SHA256"):
+            _validate_sha256_format("g" * 64, "test")
+
+
+# ── _safe_join ────────────────────────────────────────────────────────────────
+
+class TestSafeJoin:
+    """_safe_join のテスト。"""
+
+    def test_valid_path(self, tmp_path: Path) -> None:
+        """通常パスは base 配下のパスを返す。"""
+        result = _safe_join(tmp_path, "subdir/file.txt")
+        assert str(result).startswith(str(tmp_path))
+
+    def test_traversal_raises(self, tmp_path: Path) -> None:
+        """../ を含む名前は ValueError。"""
+        with pytest.raises(ValueError, match="不正なパス"):
+            _safe_join(tmp_path, "../outside.txt")
+
+
+# ── _is_already_assembled ─────────────────────────────────────────────────────
+
+class TestIsAlreadyAssembled:
+    """_is_already_assembled のテスト。"""
+
+    def test_returns_false_when_no_model(self, tmp_path: Path) -> None:
+        """model.onnx がなければ False。"""
+        spec = {"merged_sha256": "a" * 64}
+        assert _is_already_assembled(tmp_path, spec) is False
+
+    def test_returns_true_when_sha_matches(self, tmp_path: Path) -> None:
+        """SHA が一致すれば True。"""
+        data = b"model-data"
+        (tmp_path / "model.onnx").write_bytes(data)
+        spec = {"merged_sha256": _sha256(data)}
+        assert _is_already_assembled(tmp_path, spec) is True
+
+    def test_returns_false_when_sha_differs(self, tmp_path: Path) -> None:
+        """SHA が不一致なら False。"""
+        (tmp_path / "model.onnx").write_bytes(b"model-data")
+        spec = {"merged_sha256": "b" * 64}
+        assert _is_already_assembled(tmp_path, spec) is False
+
+    def test_returns_false_on_invalid_sha_format(self, tmp_path: Path) -> None:
+        """不正な SHA 形式なら False（例外なし）。"""
+        (tmp_path / "model.onnx").write_bytes(b"x")
+        spec = {"merged_sha256": "invalid"}
+        assert _is_already_assembled(tmp_path, spec) is False
+
+
+# ── _verify_parts ─────────────────────────────────────────────────────────────
+
+class TestVerifyParts:
+    """_verify_parts のテスト。"""
+
+    def _make_assets_dir(self, tmp_path: Path, parts_data: list[bytes]) -> tuple[Path, dict]:
+        """tmp_path に sparse 構造を作り (assets_dir, spec) を返す。"""
+        sparse_rel = "assets/models/ruri-v3-310m"
+        model_src = tmp_path / sparse_rel
+        model_src.mkdir(parents=True)
+        spec = _make_spec(model_src, parts_data)
+        return tmp_path, spec
+
+    def test_valid_parts_no_error(self, tmp_path: Path) -> None:
+        """SHA が正しい part は例外なし。"""
+        assets_dir, spec = self._make_assets_dir(tmp_path, [b"part0", b"part1"])
+        _verify_parts(assets_dir, spec)
+
+    def test_sha_mismatch_raises(self, tmp_path: Path) -> None:
+        """SHA 不一致は ValueError。"""
+        assets_dir, spec = self._make_assets_dir(tmp_path, [b"part0"])
+        # part を改竄
+        sparse_rel = spec["sparse_paths"][0]
+        (assets_dir / sparse_rel / "model.onnx.part00").write_bytes(b"tampered")
+        with pytest.raises(ValueError, match="SHA256 不一致"):
+            _verify_parts(assets_dir, spec)
+
+    def test_missing_part_raises(self, tmp_path: Path) -> None:
+        """part が欠落している場合は FileNotFoundError。"""
+        assets_dir, spec = self._make_assets_dir(tmp_path, [b"part0"])
+        sparse_rel = spec["sparse_paths"][0]
+        (assets_dir / sparse_rel / "model.onnx.part00").unlink()
+        with pytest.raises(FileNotFoundError, match="part が見つかりません"):
+            _verify_parts(assets_dir, spec)
+
+
+# ── _merge_and_verify ─────────────────────────────────────────────────────────
+
+class TestMergeAndVerify:
+    """_merge_and_verify のテスト。"""
+
+    def _setup(self, tmp_path: Path, parts_data: list[bytes]) -> tuple[Path, Path, dict]:
+        """assets_dir と target_dir を作り (assets_dir, target_dir, spec) を返す。"""
+        sparse_rel = "assets/models/ruri-v3-310m"
+        model_src = tmp_path / "repo" / sparse_rel
+        model_src.mkdir(parents=True)
+        spec = _make_spec(model_src, parts_data)
+        target = tmp_path / "target"
+        return tmp_path / "repo", target, spec
+
+    def test_merge_creates_model_onnx(self, tmp_path: Path) -> None:
+        """統合後 model.onnx が target_dir に作成される。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path, [b"abc", b"def"])
+        _merge_and_verify(assets_dir, target_dir, spec)
+        assert (target_dir / "model.onnx").exists()
+
+    def test_merged_content_correct(self, tmp_path: Path) -> None:
+        """統合後ファイルの内容が正しい。"""
+        parts = [b"hello", b"world"]
+        assets_dir, target_dir, spec = self._setup(tmp_path, parts)
+        _merge_and_verify(assets_dir, target_dir, spec)
+        content = (target_dir / "model.onnx").read_bytes()
+        assert content == b"helloworld"
+
+    def test_sha_mismatch_removes_tmp(self, tmp_path: Path) -> None:
+        """merged SHA 不一致なら ValueError かつ tmp が削除される。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path, [b"data"])
+        spec["merged_sha256"] = "f" * 64  # 不正な SHA
+        target_dir.mkdir(parents=True)
+        with pytest.raises(ValueError, match="SHA256 不一致"):
+            _merge_and_verify(assets_dir, target_dir, spec)
+        # 中間ファイルが残っていないことを確認
+        assert not (target_dir / "model.onnx.tmp").exists()
+
+    def test_target_dir_created_with_0o700(self, tmp_path: Path) -> None:
+        """target_dir が 0o700 で作成される。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path, [b"x"])
+        _merge_and_verify(assets_dir, target_dir, spec)
+        mode = oct(os.stat(target_dir).st_mode & 0o777)
+        assert mode == oct(0o700)
+
+
+# ── _copy_auxiliary ──────────────────────────────────────────────────────────
+
+class TestCopyAuxiliary:
+    """_copy_auxiliary のテスト。"""
+
+    def _setup(self, tmp_path: Path) -> tuple[Path, Path, dict]:
+        """assets_dir と target_dir を作り (assets_dir, target_dir, spec) を返す。"""
+        sparse_rel = "assets/models/ruri-v3-310m"
+        model_src = tmp_path / "repo" / sparse_rel
+        model_src.mkdir(parents=True)
+        spec = _make_spec(model_src, [b"x"])
+        target = tmp_path / "target"
+        target.mkdir()
+        return tmp_path / "repo", target, spec
+
+    def test_tokenizer_json_copied(self, tmp_path: Path) -> None:
+        """tokenizer.json がコピーされる。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path)
+        _copy_auxiliary(assets_dir, target_dir, spec)
+        assert (target_dir / "tokenizer.json").exists()
+
+    def test_config_json_copied(self, tmp_path: Path) -> None:
+        """config.json がコピーされる。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path)
+        _copy_auxiliary(assets_dir, target_dir, spec)
+        assert (target_dir / "config.json").exists()
+
+    def test_manifest_json_copied(self, tmp_path: Path) -> None:
+        """manifest.json がコピーされる。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path)
+        _copy_auxiliary(assets_dir, target_dir, spec)
+        assert (target_dir / "manifest.json").exists()
+
+    def test_sha_mismatch_raises(self, tmp_path: Path) -> None:
+        """auxiliary file の SHA 不一致は ValueError。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path)
+        # tokenizer.json の SHA を破損させる
+        spec["auxiliary_files"][0]["sha256"] = "f" * 64
+        with pytest.raises(ValueError, match="SHA256 不一致"):
+            _copy_auxiliary(assets_dir, target_dir, spec)
+
+    def test_missing_manifest_raises(self, tmp_path: Path) -> None:
+        """manifest.json がない場合は FileNotFoundError。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path)
+        sparse_rel = spec["sparse_paths"][0]
+        (assets_dir / sparse_rel / "manifest.json").unlink()
+        with pytest.raises(FileNotFoundError, match="manifest.json"):
+            _copy_auxiliary(assets_dir, target_dir, spec)
+
+
+# ── _sparse_checkout（subprocess モック）────────────────────────────────────
+
+class TestSparseCheckout:
+    """_sparse_checkout の subprocess 呼び出しをモックして検証する。"""
+
+    def test_calls_git_clone(self, tmp_path: Path) -> None:
+        """subprocess.run が git clone を呼び出す。"""
+        spec = {
+            "git_remote": "git@example.com:repo.git",
+            "git_commit": "a" * 40,
+            "sparse_paths": ["assets/models/ruri-v3-310m"],
+        }
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            # 実際には repo ディレクトリを作らないのでエラーになるが、
+            # ここでは subprocess 呼び出しの引数のみ検証する
+            try:
+                _sparse_checkout(spec, str(tmp_path))
+            except Exception:
+                pass
+
+        first_call = mock_run.call_args_list[0]
+        cmd = first_call[0][0]
+        assert cmd[0] == "git"
+        assert "clone" in cmd
+        assert "git@example.com:repo.git" in cmd
+
+    def test_uses_env_override(self, tmp_path: Path) -> None:
+        """DEVGEAR_MODEL_REMOTE が設定されていれば優先される。"""
+        spec = {
+            "git_remote": "git@example.com:original.git",
+            "git_commit": "b" * 40,
+            "sparse_paths": ["assets/models/ruri-v3-310m"],
+        }
+        override = "git@example.com:override.git"
+
+        with patch.dict(os.environ, {"DEVGEAR_MODEL_REMOTE": override}):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+                try:
+                    _sparse_checkout(spec, str(tmp_path))
+                except Exception:
+                    pass
+
+        first_call = mock_run.call_args_list[0]
+        cmd = first_call[0][0]
+        assert override in cmd
+        assert "git@example.com:original.git" not in cmd
+
+
+# ── _sanity_inference（ORT モック）──────────────────────────────────────────
+
+class TestSanityInference:
+    """_sanity_inference の ORT と tokenizers をモックして検証する。"""
+
+    def _make_target(self, tmp_path: Path, dim: int = 768, norm_ok: bool = True) -> tuple[Path, MagicMock, MagicMock]:
+        """target_dir に model.onnx / tokenizer.json を配置し、セッションモックを返す。"""
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "model.onnx").write_bytes(b"fake")
+        (target / "tokenizer.json").write_bytes(b'{}')
+
+        import numpy as np
+
+        # 単位ベクトル or ノルム不正ベクトルを作る
+        if norm_ok:
+            vec = np.zeros((1, 1, dim), dtype=np.float32)
+            vec[0, 0, 0] = 1.0  # norm=1
+        else:
+            vec = np.ones((1, 1, dim), dtype=np.float32) * 100.0  # norm≫1
+
+        mock_session = MagicMock()
+        mock_session.run.return_value = [vec]
+        mock_session.get_inputs.return_value = []  # token_type_ids なし
+
+        mock_enc = MagicMock()
+        mock_enc.ids = [1, 2, 3] + [0] * 509
+        mock_enc.attention_mask = [1, 1, 1] + [0] * 509
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.encode.return_value = mock_enc
+
+        return target, mock_session, mock_tokenizer
+
+    def test_valid_embedding_no_error(self, tmp_path: Path) -> None:
+        """dim=768, norm≈1.0 なら例外なし。"""
+        target, mock_session, mock_tokenizer = self._make_target(tmp_path)
+
+        with patch("onnxruntime.InferenceSession", return_value=mock_session), \
+             patch("onnxruntime.SessionOptions"), \
+             patch("tokenizers.Tokenizer.from_file", return_value=mock_tokenizer):
+            _sanity_inference(target)
+
+    def test_wrong_dim_raises(self, tmp_path: Path) -> None:
+        """dim が 768 以外は ValueError。"""
+        target, mock_session, mock_tokenizer = self._make_target(tmp_path, dim=512)
+
+        with patch("onnxruntime.InferenceSession", return_value=mock_session), \
+             patch("onnxruntime.SessionOptions"), \
+             patch("tokenizers.Tokenizer.from_file", return_value=mock_tokenizer):
+            with pytest.raises(ValueError, match="埋め込み次元"):
+                _sanity_inference(target)
+
+    def test_wrong_norm_raises(self, tmp_path: Path) -> None:
+        """L2 ノルムが 1 から大幅に外れる場合は ValueError。"""
+        target, mock_session, mock_tokenizer = self._make_target(tmp_path, norm_ok=False)
+
+        with patch("onnxruntime.InferenceSession", return_value=mock_session), \
+             patch("onnxruntime.SessionOptions"), \
+             patch("tokenizers.Tokenizer.from_file", return_value=mock_tokenizer):
+            with pytest.raises(ValueError, match="L2 ノルム"):
+                _sanity_inference(target)
+
+
+# ── assemble E2E（sparse_checkout をモック）──────────────────────────────────
+
+class TestAssemble:
+    """assemble() の E2E テスト（git は叩かない）。"""
+
+    def _setup_sources(self, tmp_path: Path) -> tuple[Path, Path, dict]:
+        """
+        tmp_path/assets/models/ruri-v3-310m にファイルを配置し、
+        model_sources.json を生成して (sources_json, target_dir, spec) を返す。
+        """
+        model_src = tmp_path / "assets" / "models" / "ruri-v3-310m"
+        model_src.mkdir(parents=True)
+        parts_data = [b"chunk0", b"chunk1"]
+        spec = _make_spec(model_src, parts_data)
+
+        sources_json = tmp_path / "model_sources.json"
+        sources_json.write_text(json.dumps(spec), encoding="utf-8")
+
+        target = tmp_path / "target"
+        return sources_json, target, spec
+
+    def _mock_sparse(self, assets_root: Path, spec: dict) -> Path:
+        """_sparse_checkout の代わりに assets_root を返す関数。"""
+        return assets_root
+
+    def test_assemble_creates_model_onnx(self, tmp_path: Path) -> None:
+        """assemble() が model.onnx を target に生成する。"""
+        sources_json, target, spec = self._setup_sources(tmp_path)
+        assets_root = tmp_path  # repo ルートとして使う
+
+        import numpy as np
+        vec = np.zeros((1, 1, 768), dtype=np.float32)
+        vec[0, 0, 0] = 1.0
+
+        mock_session = MagicMock()
+        mock_session.run.return_value = [vec]
+        mock_session.get_inputs.return_value = []
+
+        mock_enc = MagicMock()
+        mock_enc.ids = [1, 2, 3] + [0] * 509
+        mock_enc.attention_mask = [1, 1, 1] + [0] * 509
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.encode.return_value = mock_enc
+
+        with patch("devgear.mem.model_assembler._sparse_checkout",
+                   return_value=assets_root), \
+             patch("onnxruntime.InferenceSession", return_value=mock_session), \
+             patch("onnxruntime.SessionOptions"), \
+             patch("tokenizers.Tokenizer.from_file", return_value=mock_tokenizer):
+            assemble(sources_json, target)
+
+        assert (target / "model.onnx").exists()
+
+    def test_assemble_skips_when_already_assembled(self, tmp_path: Path) -> None:
+        """SHA が一致する model.onnx が既にあれば sparse_checkout を呼ばない。"""
+        sources_json, target, spec = self._setup_sources(tmp_path)
+
+        # 既に統合済みにする
+        merged = b"chunk0chunk1"
+        target.mkdir()
+        (target / "model.onnx").write_bytes(merged)
+
+        with patch("devgear.mem.model_assembler._sparse_checkout") as mock_sc:
+            assemble(sources_json, target)
+
+        mock_sc.assert_not_called()

@@ -11,12 +11,47 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import quote, unquote, urlparse, urlunparse
 
 _DEFAULT_DATA_DIR = Path.home() / ".devgear"
 _DEFAULT_EMBEDDING_MODEL = "cl-nagoya/ruri-v3-310m"
+# HF Hub commit SHA をピン留めし、サプライチェーン攻撃（名前空間再利用・改竄プッシュ）を防ぐ
+_DEFAULT_EMBEDDING_REVISION = "18b60fb8c2b9df296fb4212bb7d23ef94e579cd3"
 _SYNC_STATE_FILENAME = "sync_state.json"
+
+
+def _strip_password_to_pgpass(url: str) -> str:
+    """URL にパスワードが含まれていれば ~/.pgpass に分離し、パスワードを除いた URL を返す。
+
+    settings.json に平文パスワードが残らないようにするためのフェイルセーフ。
+    パスワードが含まれない URL はそのまま返す。
+    """
+    parsed = urlparse(url)
+    if not parsed.password:
+        return url
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 5432
+    db = (parsed.path or "/").lstrip("/") or "*"
+    user = unquote(parsed.username) if parsed.username else "*"
+    password = unquote(parsed.password)
+    pgpass_path = Path(os.environ.get("HOME", "~")).expanduser() / ".pgpass"
+    entry = f"{host}:{port}:{db}:{user}:{password}\n"
+    existing_text = pgpass_path.read_text(encoding="utf-8") if pgpass_path.exists() else ""
+    prefix = f"{host}:{port}:{db}:{user}:"
+    if not any(line.startswith(prefix) for line in existing_text.splitlines()):
+        with pgpass_path.open("a", encoding="utf-8") as f:
+            f.write(entry)
+    pgpass_path.chmod(0o600)
+    # パスワードを除いた netloc に再構築
+    userinfo = quote(parsed.username, safe="") if parsed.username else ""
+    host_part = host
+    if parsed.port:
+        host_part = f"{host_part}:{parsed.port}"
+    new_netloc = f"{userinfo}@{host_part}" if userinfo else host_part
+    return urlunparse(parsed._replace(netloc=new_netloc))
 
 
 @dataclass
@@ -148,13 +183,17 @@ class Settings:
                 existing = json.loads(self.settings_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 pass
+        url_to_save = self.sync.postgres_url
+        if url_to_save:
+            url_to_save = _strip_password_to_pgpass(url_to_save)
         existing["mem"] = {
             "sync": {
                 "enabled": self.sync.enabled,
-                "postgres_url": self.sync.postgres_url,
+                "postgres_url": url_to_save,
             },
         }
         self.settings_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        self.settings_path.chmod(0o600)
 
     def save_sync_state(self) -> None:
         """ランタイム状態（last_synced_at 等）を sync_state.json に書き出す。
@@ -171,6 +210,7 @@ class Settings:
         tmp_path = self.sync_state_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
         tmp_path.replace(self.sync_state_path)
+        self.sync_state_path.chmod(0o600)
 
     @classmethod
     def load(cls, settings_path: Path | None = None) -> Settings:

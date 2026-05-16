@@ -846,3 +846,355 @@ def test_cli_entrypoint_module(monkeypatch: pytest.MonkeyPatch) -> None:
         runpy.run_module("devgear.mem.cli", run_name="__main__")
 
     assert excinfo.value.code == 0
+
+
+def test_embed_delegates_to_embedding_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """cli.embed は devgear.mem.embedding.embed に委譲する。"""
+    import devgear.mem.embedding as embedding_mod
+
+    received: dict[str, object] = {}
+
+    def fake_embed(texts: list[str], model: str) -> list[list[float]]:
+        received["texts"] = texts
+        received["model"] = model
+        return [[0.1, 0.2]]
+
+    monkeypatch.setattr(embedding_mod, "embed", fake_embed)
+    result = cli.embed(["a"], "model-x")
+    assert result == [[0.1, 0.2]]
+    assert received == {"texts": ["a"], "model": "model-x"}
+
+
+def test_main_help_with_session_start_command_prints_wrapper(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """help 引数として SESSION_START コマンド名を渡すと wrapper が出力される。"""
+    monkeypatch.setattr(sys, "argv", ["python", "context"])
+    # 引数のみで stdin 不要：context は SESSION_START コマンドだが
+    # main() の冒頭分岐（len(argv) < 2 ではない）でなく --help 経路を通すため
+    # "-h" を含む組み合わせをテストする
+    monkeypatch.setattr(sys, "argv", ["python", "-h"])
+    assert cli.main() == 0
+    out = capsys.readouterr().out
+    # 通常 HELP_TEXT が出る（SESSION_START 系ではない）
+    assert "init" in out
+
+
+def test_main_only_arg_session_start_returns_wrapper(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """argv に SESSION_START コマンドだけ渡し、help 扱いの分岐に到達する経路を通す。"""
+    # main() 内 if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}: の分岐
+    # "context" は -h/--help ではないので、ここでは command == "" のケースを通す
+    monkeypatch.setattr(sys, "argv", ["python"])
+    # SESSION_START_COMMANDS に "" は含まれないため HELP_TEXT が出る
+    assert cli.main() == 0
+    assert "init" in capsys.readouterr().out
+
+
+def test_main_help_arg_invokes_session_start_wrapper(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--help 経路で command が SESSION_START_COMMANDS に含まれる場合の分岐を通す。"""
+    called: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli,
+        "print_session_start_output",
+        lambda *args, **kwargs: called.setdefault("called", True),
+    )
+    # SESSION_START 集合を「--help」に書き換えれば、argv[1]=="--help" 時に
+    # 「command in _SESSION_START_COMMANDS」分岐に入る
+    monkeypatch.setattr(cli, "_SESSION_START_COMMANDS", frozenset({"--help"}))
+    monkeypatch.setattr(sys, "argv", ["python", "--help"])
+    assert cli.main() == 0
+    assert called.get("called") is True
+    capsys.readouterr()
+
+
+def test_format_wrappers_delegate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_format_fields / _slim_prompt / _slim_context_content は _search_handlers に委譲する。"""
+    chunk = MemoryChunk(
+        id="c1",
+        session_id="s1",
+        project="repo",
+        chunk_index=0,
+        content="content",
+        tool_names=["Edit"],
+        files_read=[],
+        files_modified=[],
+        user_prompt="p",
+        created_at_epoch=1704067200,
+    )
+    result = SearchResult("c1", 0.9, "content", "p", "repo", 1704067200, ["Edit"], [], [])
+
+    assert isinstance(cli._format_fields("p", ["Edit"], ["a.py"], "body"), str)
+    assert isinstance(cli._format_chunk_from_result(result), str)
+    assert isinstance(cli._format_chunk(chunk), str)
+    assert isinstance(cli._format_timestamp(1704067200), str)
+    assert cli._truncate("abcdef", 3) == "abc..."
+    assert isinstance(cli._slim_prompt("x" * 200, max_len=10), str)
+    assert isinstance(
+        cli._slim_context_content(
+            "line1\nline2\nline3",
+            max_prose_lines=2,
+            max_prose_line_length=80,
+        ),
+        str,
+    )
+
+
+def test_migrate_settings_json_decode_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """settings.json が壊れていれば migrate-settings はログだけ出して return する。"""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    devgear_dir = tmp_path / ".devgear"
+    devgear_dir.mkdir()
+    (devgear_dir / "settings.json").write_text("{not-json", encoding="utf-8")
+
+    warnings: list[str] = []
+    monkeypatch.setattr(cli.log, "warning", lambda msg, *args: warnings.append(msg % args if args else msg))
+
+    cli._handle_migrate_settings(make_settings(tmp_path))
+    assert any("settings.json 読み込み失敗" in w for w in warnings)
+
+
+# === cli_dashboard_handlers のカバレッジ補完 ===
+
+
+def test_count_lines_returns_zero_on_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """count_lines は OSError 発生時に 0 を返す。"""
+    from devgear.mem import cli_dashboard_handlers as cdh
+
+    target = tmp_path / "a.jsonl"
+    target.write_text("line\n")
+
+    def _raise(*_args, **_kwargs):
+        raise OSError("denied")
+
+    monkeypatch.setattr(Path, "open", _raise)
+    assert cdh.count_lines(target) == 0
+
+
+def test_count_lines_returns_zero_when_missing(tmp_path: Path) -> None:
+    """count_lines は存在しないパスに対して 0 を返す。"""
+    from devgear.mem import cli_dashboard_handlers as cdh
+
+    assert cdh.count_lines(tmp_path / "nope.jsonl") == 0
+
+
+def test_collect_skill_health_overview_handles_collect_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """collect_skill_health が例外を出してもダッシュボードは止まらず空 report で続行する。"""
+    from devgear.mem import cli_dashboard_handlers as cdh
+
+    def _boom(_options):
+        raise RuntimeError("health boom")
+
+    monkeypatch.setattr(cdh, "collect_skill_health", _boom)
+    monkeypatch.setattr(cdh, "summarize_health_report", lambda _r: {"summary": "x"})
+
+    warnings: list[str] = []
+    fake_log = SimpleNamespace(warning=lambda msg, *args: warnings.append(msg % args if args else msg))
+
+    result = cdh.collect_skill_health_overview({"k": "v"}, log=fake_log)
+    assert result["report"] == {"generated_at": None, "skills": []}
+    assert result["skills"] == []
+    assert any("skill health collection failed" in w for w in warnings)
+
+
+def test_collect_skill_growth_overview_disabled_returns_empty(tmp_path: Path) -> None:
+    """sync 無効時は早期 return で空辞書を返す。"""
+    from devgear.mem import cli_dashboard_handlers as cdh
+
+    settings = make_settings(tmp_path)
+    settings.sync.enabled = False
+    fake_log = SimpleNamespace(warning=lambda *a, **kw: None)
+    result = cdh.collect_skill_growth_overview(settings, 30, log=fake_log)
+    assert result["summary"]["total_patterns"] == 0
+    assert result["skill_candidates"] == []
+
+
+def test_collect_skill_growth_overview_pg_not_connectable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """sync 有効でも test_connection が False なら空辞書を返す。"""
+    from devgear.mem import cli_dashboard_handlers as cdh
+
+    settings = make_settings(tmp_path)
+    settings.sync.enabled = True
+    settings.sync.postgres_url = "postgresql://example"
+
+    class _PG:
+        def __init__(self, _url: str) -> None:
+            pass
+
+        def test_connection(self) -> bool:
+            return False
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("devgear.mem.pg_database.PgDatabase", _PG)
+    fake_log = SimpleNamespace(warning=lambda *a, **kw: None)
+    result = cdh.collect_skill_growth_overview(settings, 30, log=fake_log)
+    assert result["skill_candidates"] == []
+
+
+def test_collect_skill_growth_overview_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """成功パスで proposal が返され、ランキングが構築される。"""
+    from devgear.mem import cli_dashboard_handlers as cdh
+
+    settings = make_settings(tmp_path)
+    settings.sync.enabled = True
+    settings.sync.postgres_url = "postgresql://example"
+
+    closed: dict[str, bool] = {"value": False}
+
+    class _PG:
+        def __init__(self, _url: str) -> None:
+            pass
+
+        def test_connection(self) -> bool:
+            return True
+
+        def close(self) -> None:
+            closed["value"] = True
+
+    monkeypatch.setattr("devgear.mem.pg_database.PgDatabase", _PG)
+
+    import devgear.mem.skill_analyzer as analyzer_mod
+    import devgear.mem.skill_proposal as proposal_mod
+
+    monkeypatch.setattr(analyzer_mod, "detect_repeated_patterns", lambda *a, **kw: ["p"])
+    monkeypatch.setattr(analyzer_mod, "detect_skill_gaps", lambda *a, **kw: ["g"])
+    monkeypatch.setattr(
+        proposal_mod,
+        "generate_proposal",
+        lambda patterns, gaps: {
+            "summary": {"x": 1},
+            "skill_candidates": [{"suggested_name": "skill-a", "priority_score": 5}],
+            "gap_candidates": [{"name": "gap-a"}],
+            "action_items": [{"item": "do"}],
+        },
+    )
+    fake_log = SimpleNamespace(warning=lambda *a, **kw: None)
+    result = cdh.collect_skill_growth_overview(settings, 30, log=fake_log)
+    assert result["chart_labels"] == ["skill-a"]
+    assert result["chart_scores"] == [5]
+    assert closed["value"] is True
+
+
+def test_collect_skill_growth_overview_inner_exception(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """skill_analyzer 経由で例外が起きてもログを出して空 dict を返す。"""
+    from devgear.mem import cli_dashboard_handlers as cdh
+
+    settings = make_settings(tmp_path)
+    settings.sync.enabled = True
+    settings.sync.postgres_url = "postgresql://example"
+
+    class _PG:
+        def __init__(self, _url: str) -> None:
+            pass
+
+        def test_connection(self) -> bool:
+            return True
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("devgear.mem.pg_database.PgDatabase", _PG)
+    import devgear.mem.skill_analyzer as analyzer_mod
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("analyzer boom")
+
+    monkeypatch.setattr(analyzer_mod, "detect_repeated_patterns", _boom)
+
+    warnings: list[str] = []
+    fake_log = SimpleNamespace(warning=lambda msg, *args: warnings.append(msg % args if args else msg))
+
+    result = cdh.collect_skill_growth_overview(settings, 30, log=fake_log)
+    assert result["skill_candidates"] == []
+    assert any("skill growth collection failed" in w for w in warnings)
+
+
+def test_resolve_safe_dashboard_output_path_invalid_value(tmp_path: Path) -> None:
+    """非 str / 空白 / 解決不能パスはすべて None。"""
+    from devgear.mem.cli_dashboard_handlers import _resolve_safe_dashboard_output_path
+
+    settings = make_settings(tmp_path)
+    assert _resolve_safe_dashboard_output_path(settings, None) is None
+    assert _resolve_safe_dashboard_output_path(settings, 123) is None
+    assert _resolve_safe_dashboard_output_path(settings, "   ") is None
+
+
+def test_resolve_safe_dashboard_output_path_relative(tmp_path: Path) -> None:
+    """相対パスは settings.data_path 配下に展開される。"""
+    from devgear.mem.cli_dashboard_handlers import _resolve_safe_dashboard_output_path
+
+    settings = make_settings(tmp_path)
+    resolved = _resolve_safe_dashboard_output_path(settings, "out/inner.html")
+    assert resolved is not None
+    assert str(resolved).startswith(str(Path(settings.data_path).resolve()))
+
+
+def test_resolve_safe_dashboard_output_path_outside_root(tmp_path: Path) -> None:
+    """data_path 外のパスは拒否される。"""
+    from devgear.mem.cli_dashboard_handlers import _resolve_safe_dashboard_output_path
+
+    settings = make_settings(tmp_path)
+    outside = str(tmp_path.parent / "outside.html")
+    assert _resolve_safe_dashboard_output_path(settings, outside) is None
+
+
+def test_slim_prompt_returns_empty_when_no_meaningful_content() -> None:
+    """first_meaningful_line も in_code_block も拾えない場合は空文字を返す（line 267）。"""
+    from devgear.mem.cli_search_handlers import slim_prompt
+
+    # 空白のみ＋未閉鎖コードブロック相当：すべての行が空 or ```で in_code_block の切り替えのみ
+    assert slim_prompt("```\n```\n", max_len=80) == ""
+
+
+def test_slim_context_content_returns_empty_for_empty_text() -> None:
+    """text が空なら空文字を返す（line 273）。"""
+    from devgear.mem.cli_search_handlers import slim_context_content
+
+    assert slim_context_content("") == ""
+
+
+def test_slim_context_content_skips_blank_lines() -> None:
+    """空行はスキップされる（line 283）。"""
+    from devgear.mem.cli_search_handlers import slim_context_content
+
+    result = slim_context_content("\n\nhello world\n\n", max_prose_lines=2)
+    assert "hello world" in result
+    # 余分な空行が含まれない
+    assert "\n\n" not in result
+
+
+def test_resolve_safe_dashboard_output_path_resolve_oserror(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Path.resolve が OSError を出した場合は None を返す。"""
+    from devgear.mem.cli_dashboard_handlers import _resolve_safe_dashboard_output_path
+
+    settings = make_settings(tmp_path)
+
+    original_resolve = Path.resolve
+    call_count = {"n": 0}
+
+    def _resolve(self_path: Path, *args, **kwargs):  # type: ignore[override]
+        # 1回目（allowed_root 計算）は通常通り、2回目（candidate.resolve()）は例外
+        call_count["n"] += 1
+        if call_count["n"] >= 2:
+            raise OSError("resolve fail")
+        return original_resolve(self_path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", _resolve)
+    assert _resolve_safe_dashboard_output_path(settings, str(tmp_path / "x.html")) is None

@@ -54,9 +54,9 @@ class SearchService:
         keyword_results = self.db.fts_search(query, limit=fetch_limit)
 
         # 2. sqlite-vec ベクトル検索
-        from devgear.mem.embedding import embed_query
+        import devgear.mem.embedding as _emb
 
-        query_embedding = embed_query(query, self.settings.embedding_model)
+        query_embedding = _emb.embed_query(query, self.settings.embedding_model)
         vector_results = self.db.vec_search(query_embedding, limit=fetch_limit)
 
         # 3. RRF で統合
@@ -124,7 +124,7 @@ class SearchService:
         ``exclude_origin_user`` を指定すると、PG 側で該当ユーザの行を除外して返す。
         PG 同期が無効・接続失敗・結果ゼロのいずれでも空リストを返す。
         """
-        from devgear.mem.embedding import embed_query
+        import devgear.mem.embedding as _emb
         from devgear.mem.pg_database import PgDatabase
 
         sync_cfg = self.settings.sync
@@ -138,7 +138,7 @@ class SearchService:
                 log.error("PostgreSQL への接続に失敗しました")
                 return []
 
-            query_embedding = embed_query(query, self.settings.embedding_model)
+            query_embedding = _emb.embed_query(query, self.settings.embedding_model)
             pg_results = pg_db.team_search(
                 query,
                 query_embedding,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from devgear.mem.database import (
     Adr,
@@ -22,6 +23,39 @@ if TYPE_CHECKING:
     import psycopg
 
 log = _get_logger("PG")
+
+# sslmode がこれらの値だと TLS が無効になる（フェイルクローズ対象）
+_INSECURE_SSL_MODES = frozenset({"disable", "allow", "prefer"})
+
+
+def _ensure_ssl(url: str) -> str:
+    """URL に sslmode=require を強制付与する。
+
+    sslmode=disable/allow/prefer が明示されていた場合は ValueError を発生させる（フェイルクローズ）。
+    sslmode 未指定の場合は sslmode=require を自動付与する。
+    """
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query, keep_blank_values=True)
+    existing = qs.get("sslmode", [])
+    if existing:
+        mode = existing[0].lower()
+        if mode in _INSECURE_SSL_MODES:
+            raise ValueError(
+                f"PostgreSQL URL に安全でない sslmode={mode!r} が指定されています。"
+                " sslmode=require 以上を使用してください。"
+            )
+        # verify-full / require 等の安全な値はそのまま使用
+        if mode == "require":
+            log.warning(
+                "sslmode=require は証明書検証を行いません。中間者攻撃への完全な保護には"
+                " sslmode=verify-full を推奨します。"
+            )
+        return url
+    # sslmode 未指定 → require を付与
+    qs["sslmode"] = ["require"]
+    new_query = urlencode(qs, doseq=True)
+    new_parsed = parsed._replace(query=new_query)
+    return urlunparse(new_parsed)
 
 
 class PgDatabase:
@@ -44,7 +78,7 @@ class PgDatabase:
                 try:
                     from psycopg_pool import ConnectionPool
 
-                    self._pool = ConnectionPool(self._url, min_size=1, max_size=4)
+                    self._pool = ConnectionPool(_ensure_ssl(self._url), min_size=1, max_size=4)
                 except ImportError:
                     # psycopg_pool 未インストール時はフォールバック
                     log.debug("psycopg_pool が見つかりません。単一接続を使用します")
@@ -55,7 +89,7 @@ class PgDatabase:
         if self._conn is None or self._conn.closed:
             import psycopg
 
-            self._conn = psycopg.connect(self._url)
+            self._conn = psycopg.connect(_ensure_ssl(self._url))
         return self._conn
 
     def _put_conn(self, conn: psycopg.Connection) -> None:
@@ -155,12 +189,30 @@ class PgDatabase:
         if not chunks:
             return 0
         conn = self._get_conn()
-        count = 0
         try:
+            params_list = [
+                (
+                    str(chunk.id),
+                    origin_user,
+                    chunk.session_id,
+                    chunk.project,
+                    chunk.chunk_index,
+                    chunk.content,
+                    _to_json(chunk.tool_names),
+                    _to_json(chunk.files_read),
+                    _to_json(chunk.files_modified),
+                    chunk.user_prompt,
+                    chunk.created_at_epoch,
+                    chunk.access_count,
+                    chunk.last_accessed_epoch,
+                    chunk.merged_generation,
+                    str(chunk.merged_into) if chunk.merged_into else None,
+                )
+                for chunk in chunks
+            ]
             with conn.cursor() as cur:
-                for chunk in chunks:
-                    cur.execute(
-                        """INSERT INTO memory_chunks
+                cur.executemany(
+                    """INSERT INTO memory_chunks
              (id, origin_user, session_id, project, chunk_index, content,
               tool_names, files_read, files_modified, user_prompt,
               created_at_epoch, access_count, last_accessed_epoch,
@@ -177,26 +229,10 @@ class PgDatabase:
                merged_generation = EXCLUDED.merged_generation,
                merged_into = EXCLUDED.merged_into,
                synced_at = NOW()""",
-                        (
-                            str(chunk.id),
-                            origin_user,
-                            chunk.session_id,
-                            chunk.project,
-                            chunk.chunk_index,
-                            chunk.content,
-                            _to_json(chunk.tool_names),
-                            _to_json(chunk.files_read),
-                            _to_json(chunk.files_modified),
-                            chunk.user_prompt,
-                            chunk.created_at_epoch,
-                            chunk.access_count,
-                            chunk.last_accessed_epoch,
-                            chunk.merged_generation,
-                            str(chunk.merged_into) if chunk.merged_into else None,
-                        ),
-                    )
-                    count += 1
+                    params_list,
+                )
             conn.commit()
+            count = len(params_list)
         except Exception:
             conn.rollback()
             raise
@@ -250,12 +286,26 @@ class PgDatabase:
         if not sessions:
             return 0
         conn = self._get_conn()
-        count = 0
         try:
+            params_list = [
+                (
+                    str(session.id),
+                    origin_user,
+                    session.session_id,
+                    session.project,
+                    session.started_at_epoch,
+                    session.chunk_count,
+                    session.branch,
+                    session.commit_hash,
+                    session.uncommitted_count,
+                    session.ended_at_epoch,
+                    session.project_profile_id,
+                )
+                for session in sessions
+            ]
             with conn.cursor() as cur:
-                for session in sessions:
-                    cur.execute(
-                        """INSERT INTO sessions
+                cur.executemany(
+                    """INSERT INTO sessions
              (id, origin_user, session_id, project, started_at_epoch, chunk_count,
               branch, commit_hash, uncommitted_count, ended_at_epoch, project_profile_id, synced_at)
              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
@@ -267,22 +317,10 @@ class PgDatabase:
                ended_at_epoch = EXCLUDED.ended_at_epoch,
                project_profile_id = EXCLUDED.project_profile_id,
                synced_at = NOW()""",
-                        (
-                            str(session.id),
-                            origin_user,
-                            session.session_id,
-                            session.project,
-                            session.started_at_epoch,
-                            session.chunk_count,
-                            session.branch,
-                            session.commit_hash,
-                            session.uncommitted_count,
-                            session.ended_at_epoch,
-                            session.project_profile_id,
-                        ),
-                    )
-                    count += 1
+                    params_list,
+                )
             conn.commit()
+            count = len(params_list)
         except Exception:
             conn.rollback()
             raise
@@ -335,12 +373,26 @@ class PgDatabase:
         if not instincts:
             return 0
         conn = self._get_conn()
-        count = 0
         try:
+            params_list = [
+                (
+                    inst.id,
+                    inst.origin_user,
+                    inst.instinct_id,
+                    inst.scope,
+                    inst.project_id,
+                    inst.trigger_text,
+                    inst.confidence,
+                    inst.domain,
+                    inst.content,
+                    inst.created_at_epoch,
+                    inst.updated_at_epoch,
+                )
+                for inst in instincts
+            ]
             with conn.cursor() as cur:
-                for inst in instincts:
-                    cur.execute(
-                        """INSERT INTO instincts
+                cur.executemany(
+                    """INSERT INTO instincts
              (id, origin_user, instinct_id, scope, project_id, trigger_text,
               confidence, domain, content, created_at_epoch, updated_at_epoch, synced_at)
              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
@@ -351,22 +403,10 @@ class PgDatabase:
                 content = EXCLUDED.content,
                 updated_at_epoch = EXCLUDED.updated_at_epoch,
                 synced_at = NOW()""",
-                        (
-                            inst.id,
-                            inst.origin_user,
-                            inst.instinct_id,
-                            inst.scope,
-                            inst.project_id,
-                            inst.trigger_text,
-                            inst.confidence,
-                            inst.domain,
-                            inst.content,
-                            inst.created_at_epoch,
-                            inst.updated_at_epoch,
-                        ),
-                    )
-                    count += 1
+                    params_list,
+                )
             conn.commit()
+            count = len(params_list)
         except Exception:
             conn.rollback()
             raise
@@ -385,7 +425,7 @@ class PgDatabase:
                     """INSERT INTO adrs
            (id, origin_user, project, adr_number, title, status, content,
             created_at_epoch, updated_at_epoch, synced_at)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
            ON CONFLICT (origin_user, project, adr_number) DO UPDATE SET
              title = EXCLUDED.title,
              status = EXCLUDED.status,
@@ -416,35 +456,37 @@ class PgDatabase:
         if not adrs:
             return 0
         conn = self._get_conn()
-        count = 0
         try:
+            params_list = [
+                (
+                    adr.id,
+                    adr.origin_user,
+                    adr.project,
+                    adr.adr_number,
+                    adr.title,
+                    adr.status,
+                    adr.content,
+                    adr.created_at_epoch,
+                    adr.updated_at_epoch,
+                )
+                for adr in adrs
+            ]
             with conn.cursor() as cur:
-                for adr in adrs:
-                    cur.execute(
-                        """INSERT INTO adrs
+                cur.executemany(
+                    """INSERT INTO adrs
              (id, origin_user, project, adr_number, title, status, content,
               created_at_epoch, updated_at_epoch, synced_at)
-             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
              ON CONFLICT (origin_user, project, adr_number) DO UPDATE SET
                title = EXCLUDED.title,
                status = EXCLUDED.status,
                content = EXCLUDED.content,
                updated_at_epoch = EXCLUDED.updated_at_epoch,
                synced_at = NOW()""",
-                        (
-                            adr.id,
-                            adr.origin_user,
-                            adr.project,
-                            adr.adr_number,
-                            adr.title,
-                            adr.status,
-                            adr.content,
-                            adr.created_at_epoch,
-                            adr.updated_at_epoch,
-                        ),
-                    )
-                    count += 1
+                    params_list,
+                )
             conn.commit()
+            count = len(params_list)
         except Exception:
             conn.rollback()
             raise
@@ -526,21 +568,22 @@ class PgDatabase:
         if not embeddings:
             return 0
         conn = self._get_conn()
-        count = 0
         try:
+            # pgvector 形式に変換: [0.1, 0.2, ...] → '[0.1,0.2,...]'
+            params_list = [
+                (chunk_id, "[" + ",".join(str(v) for v in vec) + "]")
+                for chunk_id, vec in embeddings
+            ]
             with conn.cursor() as cur:
-                for chunk_id, vec in embeddings:
-                    # pgvector 形式に変換: [0.1, 0.2, ...] → '[0.1,0.2,...]'
-                    vec_str = "[" + ",".join(str(v) for v in vec) + "]"
-                    cur.execute(
-                        """INSERT INTO memory_chunks_vec (chunk_id, embedding)
+                cur.executemany(
+                    """INSERT INTO memory_chunks_vec (chunk_id, embedding)
                VALUES (%s, %s::vector)
                ON CONFLICT (chunk_id) DO UPDATE SET
                  embedding = EXCLUDED.embedding""",
-                        (chunk_id, vec_str),
-                    )
-                    count += 1
+                    params_list,
+                )
             conn.commit()
+            count = len(params_list)
         except Exception:
             conn.rollback()
             raise
@@ -734,12 +777,28 @@ class PgDatabase:
         if not logs:
             return 0
         conn = self._get_conn()
-        count = 0
         try:
+            params_list = [
+                (
+                    entry.id,
+                    entry.origin_user,
+                    entry.session_id,
+                    entry.project,
+                    entry.user_prompt_full,
+                    entry.user_prompt_hash,
+                    entry.ai_response_summary,
+                    entry.ai_response_tool_plan,
+                    entry.chunk_id,
+                    entry.execution_outcome,
+                    entry.tool_error_count,
+                    entry.interaction_index,
+                    entry.created_at_epoch,
+                )
+                for entry in logs
+            ]
             with conn.cursor() as cur:
-                for entry in logs:
-                    cur.execute(
-                        """INSERT INTO interaction_logs
+                cur.executemany(
+                    """INSERT INTO interaction_logs
              (id, origin_user, session_id, project,
               user_prompt_full, user_prompt_hash,
               ai_response_summary, ai_response_tool_plan,
@@ -752,24 +811,10 @@ class PgDatabase:
                execution_outcome = EXCLUDED.execution_outcome,
                tool_error_count = EXCLUDED.tool_error_count,
                synced_at = NOW()""",
-                        (
-                            entry.id,
-                            entry.origin_user,
-                            entry.session_id,
-                            entry.project,
-                            entry.user_prompt_full,
-                            entry.user_prompt_hash,
-                            entry.ai_response_summary,
-                            entry.ai_response_tool_plan,
-                            entry.chunk_id,
-                            entry.execution_outcome,
-                            entry.tool_error_count,
-                            entry.interaction_index,
-                            entry.created_at_epoch,
-                        ),
-                    )
-                    count += 1
+                    params_list,
+                )
             conn.commit()
+            count = len(params_list)
         except Exception:
             conn.rollback()
             raise
@@ -784,12 +829,28 @@ class PgDatabase:
         if not profiles:
             return 0
         conn = self._get_conn()
-        count = 0
         try:
+            params_list = [
+                (
+                    profile.id,
+                    profile.origin_user,
+                    profile.project,
+                    profile.project_path,
+                    _to_json(profile.languages),
+                    _to_json(profile.frameworks),
+                    profile.primary_language,
+                    profile.test_command,
+                    profile.build_command,
+                    profile.scope_hint,
+                    profile.detected_at_epoch,
+                    profile.last_updated_epoch,
+                    profile.detection_confidence,
+                )
+                for profile in profiles
+            ]
             with conn.cursor() as cur:
-                for profile in profiles:
-                    cur.execute(
-                        """INSERT INTO project_profiles
+                cur.executemany(
+                    """INSERT INTO project_profiles
              (id, origin_user, project, project_path,
               languages, frameworks, primary_language,
               test_command, build_command, scope_hint,
@@ -806,24 +867,10 @@ class PgDatabase:
                last_updated_epoch = EXCLUDED.last_updated_epoch,
                detection_confidence = EXCLUDED.detection_confidence,
                synced_at = NOW()""",
-                        (
-                            profile.id,
-                            profile.origin_user,
-                            profile.project,
-                            profile.project_path,
-                            _to_json(profile.languages),
-                            _to_json(profile.frameworks),
-                            profile.primary_language,
-                            profile.test_command,
-                            profile.build_command,
-                            profile.scope_hint,
-                            profile.detected_at_epoch,
-                            profile.last_updated_epoch,
-                            profile.detection_confidence,
-                        ),
-                    )
-                    count += 1
+                    params_list,
+                )
             conn.commit()
+            count = len(params_list)
         except Exception:
             conn.rollback()
             raise
@@ -838,12 +885,28 @@ class PgDatabase:
         if not runs:
             return 0
         conn = self._get_conn()
-        count = 0
         try:
+            params_list = [
+                (
+                    run.id,
+                    run.origin_user,
+                    run.session_id,
+                    run.project,
+                    run.skill_name,
+                    run.skill_trigger,
+                    run.outcome,
+                    _to_json(run.tools_used),
+                    run.files_modified_count,
+                    run.duration_seconds,
+                    run.interaction_log_id,
+                    run.created_at_epoch,
+                    run.item_type,
+                )
+                for run in runs
+            ]
             with conn.cursor() as cur:
-                for run in runs:
-                    cur.execute(
-                        """INSERT INTO mem_item_runs
+                cur.executemany(
+                    """INSERT INTO mem_item_runs
              (id, origin_user, session_id, project,
               skill_name, skill_trigger, outcome,
               tools_used, files_modified_count, duration_seconds,
@@ -852,24 +915,10 @@ class PgDatabase:
              ON CONFLICT (id) DO UPDATE SET
                item_type = EXCLUDED.item_type,
                synced_at = NOW()""",
-                        (
-                            run.id,
-                            run.origin_user,
-                            run.session_id,
-                            run.project,
-                            run.skill_name,
-                            run.skill_trigger,
-                            run.outcome,
-                            _to_json(run.tools_used),
-                            run.files_modified_count,
-                            run.duration_seconds,
-                            run.interaction_log_id,
-                            run.created_at_epoch,
-                            run.item_type,
-                        ),
-                    )
-                    count += 1
+                    params_list,
+                )
             conn.commit()
+            count = len(params_list)
         except Exception:
             conn.rollback()
             raise

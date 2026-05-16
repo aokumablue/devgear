@@ -59,3 +59,30 @@ class TestLogger:
         log_file = list(tmp_path.glob("mem-*.log"))[0]
         content = log_file.read_text()
         assert "test message 12345" in content
+
+    def test_log_dir_chmod_0700(self, tmp_path: Path) -> None:
+        """ログディレクトリは chmod 0700 で作成される。"""
+        log_dir = tmp_path / "logs"
+        logger.setup(log_dir, level="info")
+        mode = log_dir.stat().st_mode & 0o777
+        assert mode == 0o700, f"ログディレクトリ権限が期待 0o700 だが {oct(mode)}"
+
+    def test_log_file_chmod_0600(self, tmp_path: Path) -> None:
+        """ログファイルは chmod 0600 で作成される。"""
+        logger.setup(tmp_path, level="info")
+        log_files = list(tmp_path.glob("mem-*.log"))
+        assert log_files
+        mode = log_files[0].stat().st_mode & 0o777
+        assert mode == 0o600, f"ログファイル権限が期待 0o600 だが {oct(mode)}"
+
+    def test_redacting_formatter_masks_secret(self, tmp_path: Path) -> None:
+        """ログに書かれたシークレットが [REDACTED] に置換される。"""
+        logger.setup(tmp_path, level="info")
+        log = logger.get("TEST")
+        log.info("token=sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        for h in logging.getLogger("devgear.mem").handlers:
+            h.flush()
+        log_file = list(tmp_path.glob("mem-*.log"))[0]
+        content = log_file.read_text()
+        assert "[REDACTED]" in content
+        assert "sk-ant-api03-" not in content

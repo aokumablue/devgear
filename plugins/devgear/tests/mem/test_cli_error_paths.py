@@ -13,7 +13,8 @@ import devgear.mem.cli as cli
 import devgear.mem.compaction as compaction_mod
 import devgear.mem.pg_database as pg_database_mod
 import devgear.mem.search as search_mod
-from devgear.mem.database import MemoryChunk, _parse_json_list
+from devgear.mem.models import MemoryChunk
+from devgear.mem.row_converters import _parse_json_list
 from devgear.mem.search import SearchResult
 from tests.mem.conftest import FakeDB, make_settings
 

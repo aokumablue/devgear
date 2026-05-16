@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh
 # devgear の Python 依存を repo-local の .venv に導入し、初回の ~/.devgear/settings.json を作成する。
-# Ubuntu と macOS に対応（プラットフォム自動検出）
+# Ubuntu と macOS に対応。
 # 使い方:
 #   bash install.sh
 #   bash install.sh --repo-root /path/to/repo
@@ -49,25 +49,6 @@ run_quietly() {
 pip_install_quiet() {
   run_quietly "${VENV_PYTHON}" -m pip install --no-input --quiet --disable-pip-version-check "$@"
 }
-
-# プラットフォム判定
-detect_platform() {
-  local os_type
-  os_type="$(uname -s)"
-  case "${os_type}" in
-    Darwin)
-      echo "macos"
-      ;;
-    Linux)
-      echo "linux"
-      ;;
-    *)
-      echo "unknown"
-      ;;
-  esac
-}
-
-PLATFORM="$(detect_platform)"
 
 # Python 3.12+ のバイナリを探す
 find_python3() {
@@ -119,8 +100,7 @@ ensure_venv_module() {
   echo "[devgear] python3-venv インストール完了"
 }
 
-# 既存 venv の sentence-transformers が 2.x 以下（ModernBERT 非対応）なら削除して再作成させる
-# importlib.metadata でインポートせずにバージョンを確認（import 自体が失敗するケースに対処）
+# 既存 venv に旧依存（ONNX 移行前のパッケージ）が残っていれば削除して再作成させる
 check_and_reset_venv() {
   # 壊れたシンボリックリンク（自己参照含む）は即削除
   if [[ -L "${VENV_DIR}" ]]; then
@@ -129,18 +109,16 @@ check_and_reset_venv() {
     return 0
   fi
   [[ ! -x "${VENV_PYTHON}" ]] && return 0
-  local st_major
-  st_major="$("${VENV_PYTHON}" -c "
-from importlib.metadata import version, PackageNotFoundError
-try:
-    v = version('sentence-transformers')
-    print(int(v.split('.')[0]))
-except PackageNotFoundError:
-    print(0)
+  # ONNX 移行前の重量級パッケージが残っている旧 venv を再構築
+  local has_legacy
+  has_legacy="$("${VENV_PYTHON}" -c "
+from importlib.metadata import packages_distributions, PackageNotFoundError
+pkgs = packages_distributions()
+legacy = any(p in pkgs for p in ('sentence_transformers', 'torch', 'transformers'))
+print('1' if legacy else '0')
 " 2>/dev/null || echo 0)"
-  # 2.x は ModernBERT 非対応のため再構築
-  if [[ "${st_major}" -gt 0 && "${st_major}" -lt 3 ]]; then
-    echo "[devgear] sentence-transformers ${st_major}.x detected (needs 3.x), recreating venv..."
+  if [[ "${has_legacy}" == "1" ]]; then
+    echo "[devgear] 旧依存 (sentence-transformers / PyTorch 系) を検出しました。venv を再構築します..."
     rm -rf "${VENV_DIR}"
   fi
 }
@@ -208,37 +186,37 @@ install_user_python() {
   echo "[devgear] Installing Python package dependencies into ${VENV_DIR}"
   pip_install_quiet --upgrade pip wheel
 
-  # プラットフォム別 torch インストール
-  # macOS: PyPI から取得（最新は 2.2.2 / Intel Mac）
-  # Linux: CPU-only インデックスから取得
-  if [[ "${PLATFORM}" == "macos" ]]; then
-    echo "[devgear] Installing torch for macOS"
-    pip_install_quiet 'torch>=2.0,<3.0' 'numpy>=2.0'
-  else
-    echo "[devgear] Installing torch for Linux (CPU-only)"
-    pip_install_quiet --index-url https://download.pytorch.org/whl/cpu 'torch>=2.0,<3.0' 'numpy>=2.0'
-  fi
-
-  # sentence-transformers 3.x + transformers 4.41+ は macOS Intel / Ubuntu 共に対応
-  # 3.x は torch>=1.11.0 で動き、ModernBERT（ruri-v3-310m）をサポートする
+  # torch / sentence-transformers / transformers / huggingface_hub は ONNX 化により不要
+  # CVE-2025-32434（torch pickle RCE）攻撃面を根絶するため完全に排除する
   pip_install_quiet \
-    'sentence-transformers>=3.0,<6.0' \
-    'transformers>=4.41,<6.0'
+    'onnxruntime>=1.18' \
+    'tokenizers>=0.20' \
+    'pyyaml>=6.0'
 
   # --no-deps: pyproject.toml の依存解決をスキップして上で固定したバージョンを維持する
   pip_install_quiet --no-deps -e "${REPO_ROOT}"
-  pip_install_quiet 'psycopg[binary]' 'psycopg-pool' 'protobuf' 'sentencepiece'
+  # psycopg: PostgreSQL 同期機能を使う場合のみ必要（optional）
+  pip_install_quiet 'psycopg[binary]'
 
-  echo "[devgear] Prefetching embedding model cache"
-  "${VENV_PYTHON}" - <<'PY' || echo "[devgear] Note: Embedding model prefetch failed. Models load on first use."
-from devgear.mem.embedding import prefetch_model
-import sys
-try:
-    prefetch_model()
-except Exception as e:
-    print(f"[devgear] Prefetch warning: {type(e).__name__}: {e}", file=sys.stderr)
-    sys.exit(1)
-PY
+  # ONNX モデルを sparse-checkout で取得し ~/.devgear/models/ に統合する
+  # 統合済み model.onnx が存在して SHA が一致する場合はスキップする
+  local sources_json="${SCRIPT_DIR}/model_sources.json"
+  local model_target="${HOME}/.devgear/models/ruri-v3-310m"
+  if [[ -f "${sources_json}" ]]; then
+    echo "[devgear] ONNX モデルを統合しています: ${model_target}"
+    "${VENV_PYTHON}" -m devgear.mem.model_assembler \
+      --sources "${sources_json}" \
+      --target "${model_target}"
+  else
+    echo "[devgear] Warning: ${sources_json} が見つかりません。モデル統合をスキップします。" >&2
+    echo "[devgear] scripts/build_onnx_model.sh を実行して model_sources.json を生成してください。" >&2
+  fi
+
+  # 既存 settings.json のセキュリティ移行（パスワード分離・sslmode 強制）
+  if [[ -f "${SETTINGS_PATH}" ]]; then
+    echo "[devgear] Migrating existing settings.json to hardened format"
+    "${VENV_PYTHON}" -m devgear.mem migrate-settings || echo "[devgear] Note: settings migration skipped."
+  fi
 }
 
 # ---- 引数パース ----
@@ -311,8 +289,10 @@ fi
 # よって .venv は <version>/.venv に置く必要がある。
 if [[ -d "${HOME}/.claude/plugins/cache/devgear" ]]; then
   for org_dir in "${HOME}/.claude/plugins/cache/devgear"/*; do
+    [[ -L "$org_dir" ]] && continue
     [[ -d "$org_dir" ]] || continue
     for ver_dir in "$org_dir"/*; do
+      [[ -L "$ver_dir" ]] && continue
       [[ -d "$ver_dir" ]] || continue
       local_venv="${ver_dir}/.venv"
       # VENV_DIR 自身（実行ディレクトリが既にキャッシュ内の場合）はスキップ

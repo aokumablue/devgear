@@ -9,7 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from devgear.mem.settings import _DEFAULT_EMBEDDING_MODEL, Settings
+from devgear.mem.settings import (
+    _DEFAULT_EMBEDDING_MODEL,
+    Settings,
+    _strip_password_to_pgpass,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -224,6 +228,22 @@ class TestSettingsLoad:
         s = Settings.load()
         assert s.last_compacted_at == 77.0
 
+    def test_load_default_existing_settings_reads_sync_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """settings.json が既存でも、デフォルトパス経由で sync_state.json を読む。"""
+        import devgear.mem.settings as mod
+
+        monkeypatch.setattr(mod, "_DEFAULT_DATA_DIR", tmp_path)
+        (tmp_path / "settings.json").write_text(
+            json.dumps({"mem": {"sync": {"enabled": True, "postgres_url": "u"}}})
+        )
+        (tmp_path / "sync_state.json").write_text(json.dumps({"last_compacted_at": 12.0}))
+
+        s = Settings.load()
+        assert s.last_compacted_at == 12.0
+        assert s.sync.enabled is True
+
     def test_load_broken_sync_state_is_ignored(self, tmp_path: Path) -> None:
         """sync_state.json が壊れていてもクラッシュしない。"""
         settings_file = tmp_path / "settings.json"
@@ -308,3 +328,109 @@ class TestAutoCompactSettings:
         # auto_compact_enabled / interval_days はハードコード既定値
         assert loaded.auto_compact_enabled is True
         assert loaded.auto_compact_interval_days == 7
+
+
+class TestSyncLockPathAndReload:
+    """sync_lock_path プロパティと reload_sync_state のテスト。"""
+
+    def test_sync_lock_path_is_under_data_dir(self, tmp_path: Path) -> None:
+        s = Settings()
+        assert s.sync_lock_path == tmp_path / "sync.lock"
+
+    def test_reload_sync_state_refreshes_in_place(self, tmp_path: Path) -> None:
+        """reload_sync_state は最新の sync_state.json を反映する。"""
+        s = Settings()
+        # 最初は空
+        s.reload_sync_state()
+        assert s.last_compacted_at == 0.0
+        # 後から sync_state.json を作成して反映を確認
+        (tmp_path / "sync_state.json").write_text(
+            json.dumps({"last_compacted_at": 555.0, "last_sync_success": True})
+        )
+        s.reload_sync_state()
+        assert s.last_compacted_at == 555.0
+        assert s.sync.last_sync_success is True
+
+
+class TestStripPasswordToPgpass:
+    """_strip_password_to_pgpass のテスト。"""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """テスト中の HOME を一時ディレクトリに固定する。"""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+    def test_returns_url_unchanged_when_no_password(self, tmp_path: Path) -> None:
+        """パスワードがない URL はそのまま返す。"""
+        url = "postgres://user@host:5432/db"
+        assert _strip_password_to_pgpass(url) == url
+        assert not (tmp_path / ".pgpass").exists()
+
+    def test_strips_password_and_appends_pgpass(self, tmp_path: Path) -> None:
+        """パスワード付き URL は ~/.pgpass に追記され、戻り値からは除去される。"""
+        url = "postgres://alice:secret@db.example:5433/mydb"
+        new_url = _strip_password_to_pgpass(url)
+        assert "secret" not in new_url
+        assert new_url == "postgres://alice@db.example:5433/mydb"
+        pgpass = tmp_path / ".pgpass"
+        assert pgpass.exists()
+        contents = pgpass.read_text()
+        assert "db.example:5433:mydb:alice:secret" in contents
+        # パーミッションが 0600 に固定される
+        mode = pgpass.stat().st_mode & 0o777
+        assert mode == 0o600
+
+    def test_does_not_append_duplicate_entry(self, tmp_path: Path) -> None:
+        """同じ host:port:db:user の prefix を持つ行が既にあれば追記しない。"""
+        pgpass = tmp_path / ".pgpass"
+        pgpass.write_text("db.example:5433:mydb:alice:oldpw\n")
+        url = "postgres://alice:newpw@db.example:5433/mydb"
+        _strip_password_to_pgpass(url)
+        contents = pgpass.read_text()
+        # 既存行は維持され、追記されない
+        assert contents.count("\n") == 1
+        assert "oldpw" in contents
+        assert "newpw" not in contents
+
+    def test_defaults_when_components_missing(self, tmp_path: Path) -> None:
+        """username / port / database が欠落していてもデフォルトに置換される。"""
+        url = "postgres://:secret@host"
+        new_url = _strip_password_to_pgpass(url)
+        assert "secret" not in new_url
+        pgpass = tmp_path / ".pgpass"
+        # user は "*"、port は 5432、db は "*"
+        assert "host:5432:*:*:secret" in pgpass.read_text()
+
+    def test_quotes_special_chars_in_username(self, tmp_path: Path) -> None:
+        """ユーザ名に URL 予約文字が含まれていても再構築できる。"""
+        url = "postgres://user%40org:secret@host:5432/db"
+        new_url = _strip_password_to_pgpass(url)
+        assert "secret" not in new_url
+        # urlparse がデコード済みの username を返すため、再 quote した結果が入る
+        assert "user%2540org" in new_url
+        # ~/.pgpass にはデコード済みのユーザ名で記録される
+        pgpass = tmp_path / ".pgpass"
+        assert "host:5432:db:user@org:secret" in pgpass.read_text()
+
+    def test_save_strips_password_to_pgpass(self, tmp_path: Path) -> None:
+        """Settings.save() は postgres_url 中のパスワードを ~/.pgpass に移す。"""
+        s = Settings()
+        s.sync.enabled = True
+        s.sync.postgres_url = "postgres://alice:topsecret@db.example/mydb"
+        s.save()
+        saved = json.loads((tmp_path / "settings.json").read_text())
+        assert "topsecret" not in saved["mem"]["sync"]["postgres_url"]
+        assert (tmp_path / ".pgpass").exists()
+
+    def test_save_settings_file_chmod(self, tmp_path: Path) -> None:
+        """settings.json は 0600 で書き込まれる。"""
+        s = Settings()
+        s.save()
+        mode = (tmp_path / "settings.json").stat().st_mode & 0o777
+        assert mode == 0o600
+
+    def test_strip_uses_home_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """HOME 環境変数のないシステムでも安全にフォールバックする。"""
+        monkeypatch.delenv("HOME", raising=False)
+        # HOME がなくても urlparse の処理自体はパスワードのない URL を返す
+        assert _strip_password_to_pgpass("postgres://u@h/db") == "postgres://u@h/db"

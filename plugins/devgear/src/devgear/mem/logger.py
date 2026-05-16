@@ -8,7 +8,17 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-_FORMATTER = logging.Formatter(
+
+class _RedactingFormatter(logging.Formatter):
+    """PII / シークレットを全ログメッセージから除去するフォーマッタ。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        from devgear.mem.redaction import redact
+
+        return redact(super().format(record))
+
+
+_FORMATTER = _RedactingFormatter(
     "[%(asctime)s.%(msecs)03d] [%(levelname)s] [%(name)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -30,8 +40,10 @@ def setup(log_dir: Path, level: str = "info") -> None:
 
     # ファイルハンドラ
     log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.chmod(0o700)
     log_path = log_dir / f"mem-{datetime.now():%Y-%m-%d}.log"
     fh = logging.FileHandler(log_path, encoding="utf-8")
+    log_path.chmod(0o600)
     fh.setFormatter(_FORMATTER)
     root.addHandler(fh)
 

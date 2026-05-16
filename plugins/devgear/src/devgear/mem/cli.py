@@ -93,11 +93,11 @@ def _run_normal_command(command: str, settings: Settings, stdin_data: dict[str, 
     return 0
 
 
-def embed(texts: list[str], model_name: str) -> list[list[float]]:
+def embed(texts: list[str]) -> list[list[float]]:
     """埋め込み生成を遅延ロードで実行する。"""
     from devgear.mem.embedding import embed as _embed
 
-    return _embed(texts, model_name)
+    return _embed(texts)
 
 
 def main() -> int:
@@ -369,6 +369,77 @@ def _slim_context_content(text: str, *, max_prose_lines: int = 6, max_prose_line
     )
 
 
+def _handle_migrate_settings(settings: Settings) -> None:  # noqa: ARG001
+    """既存 settings.json を新セキュリティ仕様（パスワード分離・sslmode 強制）に自動移行する。"""
+    import json as _json
+    from datetime import datetime
+    from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+    from devgear.mem.cli_sync_handlers import _split_password, _write_pgpass
+
+    settings_path = Path(os.environ.get("HOME", "~")).expanduser() / ".devgear" / "settings.json"
+    if not settings_path.exists():
+        log.info("migrate-settings: settings.json が存在しません。スキップ")
+        return
+
+    try:
+        data = _json.loads(settings_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning("migrate-settings: settings.json 読み込み失敗: %s", e)
+        return
+
+    url: str = data.get("mem", {}).get("sync", {}).get("postgres_url", "") or ""
+    if not url:
+        log.info("migrate-settings: postgres_url 未設定。スキップ")
+        return
+
+    changed = False
+
+    # 1. パスワード分離
+    stripped_url, password = _split_password(url)
+    if password:
+        parsed = urlparse(stripped_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port if parsed.port is not None else 5432
+        db = parsed.path.lstrip("/") or "*"
+        user = parsed.username or "*"
+        _write_pgpass(host, port, db, user, password)
+        url = stripped_url
+        changed = True
+        log.info("migrate-settings: PG パスワードを ~/.pgpass に移行しました")
+
+    # 2. sslmode 正規化
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query, keep_blank_values=True)
+    existing_mode = (qs.get("sslmode", [None])[0] or "").lower()
+    if existing_mode in {"disable", "allow", "prefer"}:
+        log.warning("migrate-settings: 危険な sslmode=%s を sslmode=require に変更します", existing_mode)
+        qs["sslmode"] = ["require"]
+        url = urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
+        changed = True
+    elif not existing_mode:
+        qs["sslmode"] = ["require"]
+        url = urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
+        changed = True
+        log.info("migrate-settings: sslmode=require を付与しました")
+
+    if not changed:
+        log.info("migrate-settings: 移行不要")
+        return
+
+    # バックアップ
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    bak_path = settings_path.with_name(f"settings.json.bak-{ts}")
+    bak_path.write_bytes(settings_path.read_bytes())
+    bak_path.chmod(0o600)
+
+    # 書き戻し
+    data.setdefault("mem", {}).setdefault("sync", {})["postgres_url"] = url
+    settings_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    settings_path.chmod(0o600)
+    log.info("migrate-settings: settings.json を更新しました（バックアップ: %s）", bak_path.name)
+
+
 def _handle_sync(settings: Settings, stdin_data: dict) -> None:
     _sync_handlers.handle_sync(settings, stdin_data)
 
@@ -484,6 +555,7 @@ def _handle_team_session_init(settings: Settings, stdin_data: dict) -> None:
 _COMMAND_HANDLERS: dict[str, _CommandHandler] = {
     "init": lambda settings, stdin_data: (_handle_init(settings) or None),
     "setup": lambda settings, stdin_data: (_handle_setup(settings) or None),
+    "migrate-settings": lambda settings, stdin_data: (_handle_migrate_settings(settings) or None),
     "context": _handle_context,
     "search": _handle_search,
     "session-init": _handle_session_init,
@@ -533,6 +605,7 @@ Commands:
   record-item-run        Record a skill/command/agent execution to mem_item_runs
   team-context           Inject <team-context> from PostgreSQL (FTS-only, SessionStart)
   team-session-init      Inject <team-context> with hybrid search (UserPromptSubmit)
+  migrate-settings       Migrate existing ~/.devgear/settings.json to hardened format (PG password → ~/.pgpass, sslmode=require)
 
 search-structured Input (JSON):
   {"query": "...", "project": "...", "tool_name": "Edit", "file_pattern": "*.py", "date_from": "2024-01-01", "date_to": "2024-12-31"}

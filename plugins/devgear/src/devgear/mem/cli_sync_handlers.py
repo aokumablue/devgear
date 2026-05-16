@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+from pathlib import Path
 from typing import Any, TypedDict
+from urllib.parse import urlparse, urlunparse
 
 from devgear.mem.logger import get as _get_logger
 
@@ -135,6 +138,38 @@ def _test_pg_connection(postgres_url: str, psycopg_installed: bool) -> tuple[str
         pg_db.close()
 
 
+def _split_password(url: str) -> tuple[str, str | None]:
+    """URL からパスワードを分離する。
+
+    Returns:
+        (password_stripped_url, password_or_None)
+    """
+    parsed = urlparse(url)
+    if not parsed.password:
+        return url, None
+    password = parsed.password
+    # netloc からパスワードを除去
+    userinfo = parsed.username or ""
+    host_part = parsed.hostname or ""
+    if parsed.port:
+        host_part = f"{host_part}:{parsed.port}"
+    new_netloc = f"{userinfo}@{host_part}" if userinfo else host_part
+    new_parsed = parsed._replace(netloc=new_netloc)
+    return urlunparse(new_parsed), password
+
+
+def _write_pgpass(host: str, port: int | str, db: str, user: str, password: str) -> None:
+    """~/.pgpass にエントリを追加する（重複は追加しない）。ファイルに chmod 0600 を強制する。"""
+    pgpass_path = Path(os.environ.get("HOME", "~")).expanduser() / ".pgpass"
+    entry = f"{host}:{port}:{db}:{user}:{password}\n"
+    existing_text = pgpass_path.read_text(encoding="utf-8") if pgpass_path.exists() else ""
+    prefix = f"{host}:{port}:{db}:{user}:"
+    if not any(line.startswith(prefix) for line in existing_text.splitlines()):
+        with pgpass_path.open("a", encoding="utf-8") as f:
+            f.write(entry)
+    pgpass_path.chmod(0o600)
+
+
 def _count_all_pending(settings) -> int:
     """全テーブルの未同期行数合計を返す。"""
     from devgear.mem.database import Database
@@ -146,5 +181,6 @@ def _count_all_pending(settings) -> int:
             return sum(_count_pending_rows(db.conn, t) for t in _SYNC_TABLES)
         finally:
             db.close()
-    except Exception:
+    except Exception as e:
+        log.error("pending 件数取得失敗: %s", e)
         return 0

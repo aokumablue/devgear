@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 
 from devgear.mem.database import MemoryChunk
+from devgear.mem.redaction import redact
 from devgear.mem.tag_stripping import strip_tags
 
 _FILE_WRITE_TOOLS = {"Write", "Edit", "NotebookEdit"}
@@ -91,7 +92,9 @@ class ChunkAccumulator:
         if is_error:
             self._error_count += 1
             if tool_response:
-                self._last_error = tool_response[:500]
+                from devgear.mem.redaction import redact
+
+                self._last_error = redact(tool_response[:500])
 
         # AI 応答の要約を保存（最後のものを上書き）
         if ai_response:
@@ -117,11 +120,11 @@ class ChunkAccumulator:
             session_id=self.session_id,
             project=self.project,
             chunk_index=self.chunk_index,
-            content=strip_tags(content),
+            content=redact(strip_tags(content)),
             tool_names=self.tool_names,
             files_read=self.files_read,
             files_modified=self.files_modified,
-            user_prompt=strip_tags(self.user_prompt),
+            user_prompt=redact(strip_tags(self.user_prompt)),
             created_at_epoch=int(time.time()),
             execution_status=execution_status,
             tool_error=self._last_error,

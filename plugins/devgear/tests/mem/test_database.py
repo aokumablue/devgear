@@ -9,8 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 from devgear.mem.database import (
-    Adr,
     Database,
+    _make_prompt_hash,
+)
+from devgear.mem.models import (
+    Adr,
     EventLog,
     Instinct,
     InteractionLog,
@@ -18,7 +21,8 @@ from devgear.mem.database import (
     MemoryChunk,
     ProjectProfile,
     Session,
-    _make_prompt_hash,
+)
+from devgear.mem.row_converters import (
     _parse_json_dict_list,
     _parse_json_list,
     _row_to_adr,
@@ -1046,3 +1050,29 @@ class TestInteractionAndRunQueries:
     )
     def test_parse_json_dict_list(self, input_val: str | None, expected: list[dict]) -> None:
         assert _parse_json_dict_list(input_val) == expected
+
+
+class TestDatabaseFilePermissions:
+    """新規 DB 作成時のファイル権限検証。"""
+
+    def test_new_db_chmod_0600(self, tmp_path: Path) -> None:
+        """新規作成された mem.db は chmod 0600 になる。"""
+        db_path = tmp_path / "mem.db"
+        db = Database(str(db_path))
+        db.close()
+        mode = db_path.stat().st_mode & 0o777
+        assert mode == 0o600, f"期待 0o600 だが {oct(mode)} が設定されている"
+
+    def test_existing_db_permissions_unchanged(self, tmp_path: Path) -> None:
+        """既存 DB を再 open しても権限を変更しない（既存ユーザの DB を破壊しない）。"""
+        db_path = tmp_path / "mem.db"
+        # 最初に作成（→ 0o600）
+        db = Database(str(db_path))
+        db.close()
+        # 権限を変えた状態でシミュレート
+        db_path.chmod(0o644)
+        # 再 open
+        db2 = Database(str(db_path))
+        db2.close()
+        mode = db_path.stat().st_mode & 0o777
+        assert mode == 0o644, "既存 DB の権限を変更してはいけない"

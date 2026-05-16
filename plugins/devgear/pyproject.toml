@@ -19,14 +19,21 @@ keywords = [
 
 dependencies = [
     "pydantic>=2.0",
-    "sentence-transformers>=3.0,<6.0",
-    "transformers>=4.41,<6.0",
-    "torch>=2.0,<3.0",
-    "numpy>=2.0",
+    # ONNX Runtime: pickle 非依存・trust_remote_code 不要・CVE-2025-32434 攻撃面ゼロ
+    "onnxruntime>=1.18",
+    # Rust 実装の高速トークナイザ（sentence-transformers / torch 不要）
+    "tokenizers>=0.20",
     "sqlite-vec>=0.1",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
+postgres = [
+    "psycopg[binary]>=3.1",
+]
+dashboard = [
+    "jinja2>=3.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",
@@ -47,7 +54,7 @@ build-backend = "hatchling.build"
 packages = ["src/devgear"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "../../tests/model_build"]
 python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
@@ -64,7 +71,12 @@ ignore = ["E501"]
 source = ["src/devgear"]
 branch = true
 
+[tool.coverage.run.paths]
+# model_build は plugins/devgear 配下ではなく src/ 配下にある
+# テスト実行時は PYTHONPATH=../../src で追加する
+
 [tool.coverage.report]
+fail_under = 100
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

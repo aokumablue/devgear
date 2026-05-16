@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     OpenDbFn = Callable[[Settings], AbstractContextManager[Database]]
     GetProjectFn = Callable[[dict[str, Any]], str]
-    EmbedFn = Callable[[list[str], str], list[list[float]]]
+    EmbedFn = Callable[[list[str]], list[list[float]]]
 
 
 def handle_context(
@@ -165,8 +165,9 @@ def handle_session_end(
             if not chunks:
                 return
 
-            texts = [c.content for c in chunks]
-            embeddings = embed_fn(texts, settings.embedding_model)
+            from devgear.mem.redaction import redact
+            texts = [redact(c.content) for c in chunks]
+            embeddings = embed_fn(texts)
             chunk_ids = [c.id for c in chunks if c.id is not None]
             db.store_embeddings(chunk_ids, embeddings)
             log.info("埋め込み保存: session=%s chunks=%d", session_id, len(chunk_ids))
@@ -189,6 +190,7 @@ def handle_session_end(
                     try:
                         low_quality_ids = detect_low_quality(db)
                         near_dup_pairs = find_near_duplicates(db)
+                        # TODO: near_dup_pairs の重複削除処理を実装する
                         if low_quality_ids:
                             placeholders = ",".join("?" * len(low_quality_ids))
                             db.conn.execute(

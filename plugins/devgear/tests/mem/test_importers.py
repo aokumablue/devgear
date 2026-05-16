@@ -180,6 +180,51 @@ Body
         assert result == 1
         assert db.upsert_instinct.call_count == 1
 
+    def test_same_project_in_multiple_dirs_is_skipped(self, tmp_path):
+        """異なる projects_dir に同名 project が存在する場合、2 回目はスキップされる（line 64）。"""
+        from devgear.mem.importers import import_instincts
+
+        db = MagicMock()
+        dir_a = tmp_path / "a" / "projects"
+        dir_b = tmp_path / "b" / "projects"
+        for base in (dir_a, dir_b):
+            personal = base / "proj-1" / "instincts" / "personal"
+            personal.mkdir(parents=True)
+            (personal / "i.yaml").write_text(
+                "id: dup-id\ntrigger: t\nconfidence: 0.9\n",
+                encoding="utf-8",
+            )
+
+        with patch("devgear.mem.importers._project_dirs", lambda: [dir_a, dir_b]):
+            result = import_instincts(db, "test_user")
+
+        # dup-id は dir_a のみで取り込まれ、dir_b はスキップ → 1 回だけ
+        assert result == 1
+        assert db.upsert_instinct.call_count == 1
+
+    def test_event_logs_same_project_in_multiple_dirs_is_skipped(self, tmp_path):
+        """import_event_logs でも 2 回目の同名 project はスキップされる（line 273）。"""
+        from devgear.mem.importers import import_event_logs
+
+        db = MagicMock()
+        db.exists_event_log_by_natural_key.return_value = False
+        dir_a = tmp_path / "a" / "projects"
+        dir_b = tmp_path / "b" / "projects"
+        for base in (dir_a, dir_b):
+            proj = base / "proj-1"
+            proj.mkdir(parents=True)
+            (proj / "observations.jsonl").write_text(
+                json.dumps({"event": "x", "timestamp": 1, "data": {"a": 1}}) + "\n",
+                encoding="utf-8",
+            )
+
+        with patch("devgear.mem.importers._project_dirs", lambda: [dir_a, dir_b]):
+            with patch("devgear.mem.importers.DEVGEAR_DIR", tmp_path / ".devgear"):
+                result = import_event_logs(db, "test_user", project_id="proj-1")
+
+        # 重複スキップで dir_a 分のみ取り込み → 1 イベント
+        assert result == 1
+
 
 class TestImportAdrs:
     """import_adrs のテスト"""

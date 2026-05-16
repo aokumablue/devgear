@@ -53,9 +53,9 @@ def build_team_context(
                     exclude_origin_user=exclude_origin_user,
                 )
             else:
-                from devgear.mem.embedding import embed_query
+                import devgear.mem.embedding as _emb
 
-                embedding = embed_query(query, embedding_model)
+                embedding = _emb.embed_query(query, embedding_model)
                 ranked = pg.team_search(
                     query,
                     embedding,

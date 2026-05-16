@@ -428,40 +428,38 @@ def command_exists(cmd: str) -> bool:
 
 
 # 安全なコマンド接頭辞の許可リスト
-_ALLOWED_COMMAND_PREFIXES = ("git ", "node ", "npx ", "which ", "where ")
+_ALLOWED_COMMAND_PREFIXES = ("git", "node", "npx", "which", "where")
 
 
-def run_command(cmd: str, **kwargs: Any) -> dict[str, Any]:
+def run_command(cmd: str | list[str], **kwargs: Any) -> dict[str, Any]:
     """
     コマンドを実行して出力を返す。
 
-    セキュリティ注意: この関数はシェルコマンドを実行する。
-    信頼できるハードコード済みコマンドにのみ使用し、ユーザー入力を直接渡してはいけない。
-    ユーザー入力を扱う場合は、引数リスト形式の subprocess.run を使うこと。
-
     Args:
-        cmd: 実行するコマンド（信頼済み/ハードコード済みであるべき）
+        cmd: 実行するコマンド（文字列または引数リスト。信頼済み/ハードコード済みであるべき）
         **kwargs: subprocess.run に渡す追加引数
 
     Returns:
         'success'（bool）と'output'（str）を持つ辞書
     """
-    # 既知で安全なコマンド接頭辞のみ許可
-    if not any(cmd.startswith(prefix) for prefix in _ALLOWED_COMMAND_PREFIXES):
-        return {"success": False, "output": "runCommand blocked: unrecognized command prefix"}
+    if isinstance(cmd, str):
+        # シェルのメタ文字を拒否（shell=False でも引数経由での注入を防ぐ）
+        if re.search(r"[;|&\n`$]", cmd):
+            return {"success": False, "output": "runCommand blocked: shell metacharacters not allowed"}
+        cmd_list = cmd.split()
+    else:
+        cmd_list = list(cmd)
 
-    # シェルのメタ文字を拒否
-    # 演算子検査のため引用部分を除去
-    unquoted = re.sub(r'"[^"]*"', "", cmd)
-    unquoted = re.sub(r"'[^']*'", "", unquoted)
+    if not cmd_list:
+        return {"success": False, "output": "runCommand error: empty command"}
 
-    if re.search(r"[;|&\n]", unquoted) or re.search(r"[`$]", cmd):
-        return {"success": False, "output": "runCommand blocked: shell metacharacters not allowed"}
+    if cmd_list[0] not in _ALLOWED_COMMAND_PREFIXES:
+        return {"success": False, "output": "runCommand blocked: unrecognized command"}
 
     try:
         result = subprocess.run(
-            cmd,
-            shell=True,
+            cmd_list,
+            shell=False,
             capture_output=True,
             text=True,
             **kwargs,

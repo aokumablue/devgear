@@ -964,6 +964,60 @@ class TestSyncLogVisibility:
         assert error_records, "error レベルのログが出ていない"
         assert error_records[-1].exc_info is not None
 
+    def test_resolve_sync_lock_path_falls_back_when_path_invalid(self, monkeypatch):
+        """sync_lock_path が Path 化できないオブジェクトのとき、HOME 配下にフォールバックする（lines 134-135）。"""
+        from devgear.mem.sync import _resolve_sync_lock_path
+
+        class _Bad:
+            def __fspath__(self):
+                raise TypeError("not path-like")
+
+        settings = SimpleNamespace(sync_lock_path=_Bad())
+        result = _resolve_sync_lock_path(settings)
+        assert str(result).endswith(".devgear/sync.lock")
+
+    def test_acquire_sync_lock_reraises_unexpected_oserror(self, tmp_path, monkeypatch):
+        """flock が EACCES/EAGAIN 以外で失敗した場合は例外を再発火する（line 150）。"""
+        import devgear.mem.sync as sync_mod
+
+        settings = SimpleNamespace(sync_lock_path=tmp_path / "sync.lock")
+
+        def _flock(_fd, _flags):
+            raise OSError(13, "fake error")  # 13 = EACCES でなく EPERM 等の代理として
+
+        # EACCES の番号と被らないよう、別の errno を使う
+        import errno as _errno
+
+        def _flock_unexpected(_fd, _flags):
+            err = OSError("unexpected")
+            err.errno = _errno.EIO
+            raise err
+
+        monkeypatch.setattr(sync_mod.fcntl, "flock", _flock_unexpected)
+
+        with pytest.raises(OSError):
+            with sync_mod._acquire_sync_lock(settings):
+                pass
+
+    def test_reload_sync_state_falls_back_to_private_loader(self, monkeypatch):
+        """reload_sync_state が無く _load_sync_state が呼ばれる経路（lines 164-166）。"""
+        from devgear.mem.sync import _reload_sync_state
+
+        called = {"v": False}
+
+        class _S:
+            def _load_sync_state(self) -> None:
+                called["v"] = True
+
+        _reload_sync_state(_S())
+        assert called["v"] is True
+
+    def test_reload_sync_state_noop_when_no_methods(self) -> None:
+        """reload_sync_state も _load_sync_state も無いなら何もしない。"""
+        from devgear.mem.sync import _reload_sync_state
+
+        _reload_sync_state(SimpleNamespace())
+
     def test_mask_url(self, monkeypatch):
         """_mask_url がパスワード部を正しくマスクすることを確認する。"""
         from devgear.mem.sync import _mask_url

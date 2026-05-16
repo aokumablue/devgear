@@ -51,6 +51,13 @@ _MIN_RETRY_INTERVAL = 5 * 60
 # 1回の同期で取得する最大行数（メモリ爆発防止）
 _SYNC_BATCH_SIZE = 500
 # 同期対象テーブル一覧（cli_sync_handlers._count_all_pending でも共有）
+# ORDER BY に使用できるカラム名の許可リスト（_claim_pending_rows のセキュリティ検証用）
+_ALLOWED_ORDER_BY_COLUMNS: frozenset[str] = frozenset({
+    "created_at_epoch",
+    "started_at_epoch",
+    "last_updated_epoch",
+})
+
 _SYNC_TABLES: tuple[str, ...] = (
     "memory_chunks",
     "sessions",
@@ -82,6 +89,8 @@ def _row_to_session(row: sqlite3.Row) -> Session:
 
 def _count_pending_rows(conn: sqlite3.Connection, table: str) -> int:
     """未同期行数を数える。"""
+    if table not in _SYNC_TABLES:
+        raise ValueError(f"Invalid table: {table}")
     row = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE synced_at IS NULL").fetchone()
     return int(row[0]) if row else 0
 
@@ -96,6 +105,10 @@ def _claim_pending_rows[T](
     batch_size: int = _SYNC_BATCH_SIZE,
 ) -> list[T]:
     """未同期行を取得して synced_at を立てる（最大 batch_size 件）。"""
+    if table not in _SYNC_TABLES:
+        raise ValueError(f"Invalid table: {table}")
+    if order_by not in _ALLOWED_ORDER_BY_COLUMNS:
+        raise ValueError(f"Invalid order_by column: {order_by}")
     rows = conn.execute(
         f"SELECT * FROM {table} WHERE synced_at IS NULL ORDER BY {order_by} LIMIT ?",
         (batch_size,),

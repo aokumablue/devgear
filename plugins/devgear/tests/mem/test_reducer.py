@@ -204,6 +204,15 @@ class TestSmartTruncate:
         assert "90 行省略" in result
         assert "計 100 行" in result
 
+    def test_character_based_truncation_for_few_long_lines(self) -> None:
+        """行数は少ないが文字数が多い場合、文字数ベースでトランケートされる（lines 240-241）。"""
+        text = "a" * 500  # 1行で 500 文字
+        result = smart_truncate(text, max_len=100, head_lines=30, tail_lines=30)
+        assert "文字省略" in result
+        # 先頭/末尾の文字が含まれる
+        assert result.startswith("a" * 50)
+        assert result.endswith("a" * 50)
+
 
 # ---------------------------------------------------------------------------
 # パイプライン統合

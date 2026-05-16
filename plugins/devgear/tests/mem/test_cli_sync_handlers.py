@@ -6,6 +6,7 @@ handle_sync_check の可視化改善と handle_sync_status の JSON 出力契約
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -475,3 +476,70 @@ class TestInternalHelpers:
 
         result = _count_all_pending(mock_settings)
         assert result == 3 * len(_SYNC_TABLES)
+
+
+class TestSplitPassword:
+    """_split_password のテーブル駆動テスト。"""
+
+    def test_url_with_password_splits(self) -> None:
+        from devgear.mem.cli_sync_handlers import _split_password
+
+        url, pw = _split_password("postgresql://user:secret@host/db")
+        assert pw == "secret"
+        assert "secret" not in url
+        assert "user" in url
+        assert "host" in url
+
+    def test_url_without_password_unchanged(self) -> None:
+        from devgear.mem.cli_sync_handlers import _split_password
+
+        original = "postgresql://user@host/db"
+        url, pw = _split_password(original)
+        assert pw is None
+        assert url == original
+
+    def test_url_preserves_port(self) -> None:
+        from devgear.mem.cli_sync_handlers import _split_password
+
+        url, pw = _split_password("postgresql://user:pass@host:5433/mydb")
+        assert pw == "pass"
+        assert "5433" in url
+        assert "pass" not in url
+
+    def test_empty_url_returns_unchanged(self) -> None:
+        from devgear.mem.cli_sync_handlers import _split_password
+
+        url, pw = _split_password("")
+        assert pw is None
+        assert url == ""
+
+
+class TestWritePgpass:
+    """_write_pgpass のテスト。"""
+
+    def test_creates_pgpass_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from devgear.mem.cli_sync_handlers import _write_pgpass
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        _write_pgpass("myhost", 5432, "mydb", "myuser", "mypassword")
+        pgpass_path = tmp_path / ".pgpass"
+        assert pgpass_path.exists()
+        content = pgpass_path.read_text()
+        assert "myhost:5432:mydb:myuser:mypassword" in content
+
+    def test_pgpass_chmod_0600(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from devgear.mem.cli_sync_handlers import _write_pgpass
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        _write_pgpass("host", 5432, "db", "user", "pass")
+        pgpass_path = tmp_path / ".pgpass"
+        assert pgpass_path.stat().st_mode & 0o777 == 0o600
+
+    def test_no_duplicate_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from devgear.mem.cli_sync_handlers import _write_pgpass
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        _write_pgpass("h", 5432, "d", "u", "p")
+        _write_pgpass("h", 5432, "d", "u", "p")
+        content = (tmp_path / ".pgpass").read_text()
+        assert content.count("h:5432:d:u:p") == 1

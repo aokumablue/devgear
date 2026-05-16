@@ -21,6 +21,12 @@ def _patch_default_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     monkeypatch.setattr(mod, "_DEFAULT_DATA_DIR", tmp_path)
 
 
+@pytest.fixture(autouse=True)
+def _patch_embed_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embed_query をモックして HF Hub への通信を防ぐ（local_files_only=True のため必要）。"""
+    monkeypatch.setattr("devgear.mem.embedding.embed_query", lambda *_a, **_kw: [0.1, 0.2])
+
+
 @pytest.fixture
 def db(tmp_path: Path) -> Database:
     return Database(tmp_path / "test.db")

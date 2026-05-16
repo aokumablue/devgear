@@ -95,12 +95,16 @@ def write_fake_python(path: Path, log_path: Path) -> None:
         '  echo "memsetup:${*:3}" >> "${LOG_PATH}"\n'
         "  exit 0\n"
         "fi\n"
+        'if [[ "${1:-}" == "-m" && "${2:-}" == "devgear.mem.model_assembler" ]]; then\n'
+        '  echo "model_assembler:${*:3}" >> "${LOG_PATH}"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "${1:-}" == "-m" && "${2:-}" == "devgear.mem" && "${3:-}" == "migrate-settings" ]]; then\n'
+        '  echo "migrate-settings:${*:3}" >> "${LOG_PATH}"\n'
+        "  exit 0\n"
+        "fi\n"
         'if [[ "${1:-}" == "-" ]]; then\n'
         "  script=$(cat)\n"
-        '  if [[ "${script}" == *"prefetch_model()"* ]]; then\n'
-        '    echo "prefetch" >> "${LOG_PATH}"\n'
-        "    exit 0\n"
-        "  fi\n"
         '  printf "%s" "${script}" | "${REAL_PYTHON}" - "${@:2}"\n'
         "  exit $?\n"
         "fi\n"
@@ -131,12 +135,17 @@ def prepare_temp_repo(tmp_path: Path) -> Path:
 
 
 def test_install_script_is_user_facing_only() -> None:
-    """install.sh がユーザ向け処理のみを持ち、開発者向け依存を含まないこと。"""
+    """install.sh がユーザ向け処理のみを持ち、torch / sentence-transformers をインストールしないこと。"""
     content = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
     assert 'exec "${SCRIPT_DIR}/install-dev.sh"' in content
-    assert "prefetch_model()" in content
-    assert "torch>=2.0" in content
+    assert "onnxruntime" in content
+    # pip install 引数として torch / sentence-transformers が渡されない
+    assert "pip_install_quiet 'torch" not in content
+    assert "pip_install_quiet --index-url" not in content
+    assert "pip_install_quiet 'sentence-transformers" not in content
+    assert "pip_install_quiet 'huggingface_hub" not in content
+    assert "prefetch_model" not in content
     assert "psycopg[binary]" in content
     assert "ruff" not in content
     assert "vulture" not in content
@@ -146,9 +155,12 @@ def test_install_dev_script_contains_developer_extras() -> None:
     """install-dev.sh が install.sh を呼び出し、開発者向け依存を追加すること。"""
     content = INSTALL_DEV_SCRIPT.read_text(encoding="utf-8")
 
-    assert "torch>=2.0" not in content
+    # ONNX 化により torch / sentence-transformers / prefetch_model は完全に消えていること
+    assert "torch" not in content
+    assert "sentence-transformers" not in content
+    assert "prefetch_model" not in content
+    # psycopg はユーザ側 install.sh の責務
     assert "psycopg[binary]" not in content
-    assert "prefetch_model()" not in content
     assert 'bash "${SCRIPT_DIR}/install.sh"' in content
     assert "[dev]" in content
     assert "ruff" in content
@@ -245,15 +257,16 @@ def test_install_dev_script_runs_user_and_dev_steps(tmp_path: Path) -> None:
     log = log_path.read_text(encoding="utf-8")
     log_lines = log.splitlines()
     editable_idx = next(i for i, line in enumerate(log_lines) if "pip:install" in line and " -e " in line)
-    torch_idx = next(i for i, line in enumerate(log_lines) if "torch>=2.0" in line)
+    onnx_idx = next(i for i, line in enumerate(log_lines) if "onnxruntime" in line)
 
     assert "pip:install --no-input --quiet --disable-pip-version-check --upgrade pip wheel" in log
     assert " -e " in log
-    assert "torch>=2.0" in log
-    assert "--index-url https://download.pytorch.org/whl/cpu" in log_lines[torch_idx]
-    assert torch_idx < editable_idx
+    assert "onnxruntime" in log
+    assert "tokenizers" in log
+    assert "torch" not in log
+    assert "sentence-transformers" not in log
+    assert onnx_idx < editable_idx
     assert "psycopg[binary]" in log
-    assert "prefetch" in log
     assert "[dev]" in log
 
 

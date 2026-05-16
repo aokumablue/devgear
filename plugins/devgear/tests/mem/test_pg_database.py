@@ -18,7 +18,7 @@ from devgear.mem.database import (
     ProjectProfile,
     Session,
 )
-from devgear.mem.pg_database import PgDatabase, _to_json
+from devgear.mem.pg_database import PgDatabase, _ensure_ssl, _to_json
 
 
 class FakeCursor:
@@ -35,6 +35,10 @@ class FakeCursor:
 
     def execute(self, sql: str, params=None) -> None:  # noqa: ANN001
         self.executed.append((sql, params))
+
+    def executemany(self, sql: str, params_list) -> None:  # noqa: ANN001
+        for params in params_list:
+            self.executed.append((sql, params))
 
     def fetchone(self):  # noqa: ANN001
         return self.fetchone_result
@@ -67,6 +71,9 @@ class FakeConn:
 
 class BoomCursor(FakeCursor):
     def execute(self, sql: str, params=None) -> None:  # noqa: ANN001
+        raise RuntimeError("boom")
+
+    def executemany(self, sql: str, params_list) -> None:  # noqa: ANN001
         raise RuntimeError("boom")
 
 
@@ -561,3 +568,43 @@ def test_fetch_chunks_by_ids_parses_rows(monkeypatch: pytest.MonkeyPatch) -> Non
     assert rows["chunk-1"]["tool_names"] == ["Edit"]
     assert rows["chunk-1"]["files_read"] == ["file.py"]
     assert rows["chunk-1"]["files_modified"] == []
+
+
+class TestEnsureSsl:
+    """_ensure_ssl のテーブル駆動テスト。"""
+
+    def test_no_sslmode_adds_require(self) -> None:
+        """sslmode 未指定 URL には sslmode=require が自動付与される。"""
+        result = _ensure_ssl("postgresql://user@host/db")
+        assert "sslmode=require" in result
+
+    def test_require_unchanged(self) -> None:
+        """sslmode=require はそのまま維持される。"""
+        url = "postgresql://user@host/db?sslmode=require"
+        assert _ensure_ssl(url) == url
+
+    def test_verify_full_unchanged(self) -> None:
+        """sslmode=verify-full はそのまま維持される。"""
+        url = "postgresql://user@host/db?sslmode=verify-full"
+        assert _ensure_ssl(url) == url
+
+    def test_disable_raises(self) -> None:
+        """sslmode=disable は ValueError を発生させる（フェイルクローズ）。"""
+        with pytest.raises(ValueError, match="sslmode"):
+            _ensure_ssl("postgresql://user@host/db?sslmode=disable")
+
+    def test_allow_raises(self) -> None:
+        """sslmode=allow は ValueError を発生させる。"""
+        with pytest.raises(ValueError, match="sslmode"):
+            _ensure_ssl("postgresql://user@host/db?sslmode=allow")
+
+    def test_prefer_raises(self) -> None:
+        """sslmode=prefer は ValueError を発生させる。"""
+        with pytest.raises(ValueError, match="sslmode"):
+            _ensure_ssl("postgresql://user@host/db?sslmode=prefer")
+
+    def test_url_with_other_params_preserves_them(self) -> None:
+        """他のクエリパラメータは保持される。"""
+        result = _ensure_ssl("postgresql://user@host/db?application_name=test")
+        assert "sslmode=require" in result
+        assert "application_name=test" in result

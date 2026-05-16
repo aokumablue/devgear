@@ -165,10 +165,8 @@ def test_build_team_context_hybrid_uses_team_search(
         captured["model"] = model
         return [0.1, 0.2]
 
-    # 遅延 import 先をパッチ
-    import devgear.mem.embedding as embedding_mod
-
-    monkeypatch.setattr(embedding_mod, "embed_query", _fake_embed)
+    # 遅延 import 先をパッチ（team_context.py 内の from ... import を上書き）
+    monkeypatch.setattr("devgear.mem.embedding.embed_query", _fake_embed)
 
     pg = _make_pg([("c-1", 0.8)], {"c-1": _chunk(content="team-knowledge")})
     out = module.build_team_context(
