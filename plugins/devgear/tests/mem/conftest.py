@@ -33,6 +33,9 @@ def pytest_collection_modifyitems(items: list) -> None:
     for item in items:
         if "tests/mem" not in str(item.fspath):
             continue
+        # model_assembler / embedding は sqlite-vec に依存しないのでスキップ除外
+        if item.fspath.basename in {"test_model_assembler.py", "test_embedding_security.py"}:
+            continue
         if not has_sqlite_vec:
             item.add_marker(skip_vec)
         elif not has_sentence_transformers:

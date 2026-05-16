@@ -2,11 +2,11 @@
   "schema_version": 1,
   "model_name": "cl-nagoya/ruri-v3-310m",
   "git_remote": "git@github.com:aokumablue/devgear.git",
-  "git_commit": "defaadadbf7c50060fb0154f80282acfba07e406",
+  "git_commit": "a2f9ac629be7c5391b6ad13e1cb348622bd8a9f0",
   "sparse_paths": [
-    "assets/models/ruri-v3-310m"
+    "assets/models"
   ],
-  "manifest_relpath": "assets/models/ruri-v3-310m/manifest.json",
+  "manifest_relpath": "assets/models/manifest.json",
   "merged_sha256": "ce7bff725aec4baa335fc892988e24deadb3edca63ef09142e85c53390ee9805",
   "parts": [
     {

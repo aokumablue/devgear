@@ -97,7 +97,7 @@ def reset_embedding_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """各テスト前に内部シングルトンをリセットし、モデルパスを tmp_path に向ける。"""
     monkeypatch.setattr(embedding, "_session", None)
     monkeypatch.setattr(embedding, "_tokenizer", None)
-    model_dir = tmp_path / "models" / "ruri-v3-310m"
+    model_dir = tmp_path / "models"
     _write_fake_model_dir(model_dir)
     monkeypatch.setattr(embedding, "_MODELS_DIR", model_dir)
 

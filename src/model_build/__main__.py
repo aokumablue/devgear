@@ -20,7 +20,7 @@ from model_build.quantize import DEFAULT_QUANT, QUANT_CHOICES
 # デフォルト値（settings.py に合わせて維持）
 _DEFAULT_MODEL = "cl-nagoya/ruri-v3-310m"
 _DEFAULT_REVISION = "18b60fb8c2b9df296fb4212bb7d23ef94e579cd3"
-_DEFAULT_OUT = Path(__file__).resolve().parents[2] / "assets" / "models" / "ruri-v3-310m"
+_DEFAULT_OUT = Path(__file__).resolve().parents[2] / "assets" / "models"
 _DEFAULT_SOURCES_OUT = (
     Path(__file__).resolve().parents[2] / "plugins" / "devgear" / "model_sources.json"
 )
@@ -128,8 +128,8 @@ def _cmd_sources(args: argparse.Namespace) -> None:
     )
     git_commit = result.stdout.strip()
 
-    # assets/models/ruri-v3-310m への sparse path（リポルートからの相対パス）
-    sparse_path = "assets/models/ruri-v3-310m"
+    # assets/models への sparse path（リポルートからの相対パス）
+    sparse_path = "assets/models"
 
     sources = {
         "schema_version": 1,

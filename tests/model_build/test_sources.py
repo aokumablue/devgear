@@ -159,7 +159,7 @@ class TestCmdSources:
         assert cmd == ["git", "rev-parse", "HEAD"]
 
     def test_sources_sparse_paths_contains_assets_models(self, tmp_path: Path) -> None:
-        """sparse_paths に assets/models/ruri-v3-310m が含まれる。"""
+        """sparse_paths に assets/models が含まれる。"""
         _make_manifest(tmp_path)
         out = tmp_path / "model_sources.json"
 
@@ -168,4 +168,4 @@ class TestCmdSources:
             _cmd_sources(_make_args(tmp_path, out))
 
         data = json.loads(out.read_text(encoding="utf-8"))
-        assert "assets/models/ruri-v3-310m" in data["sparse_paths"]
+        assert "assets/models" in data["sparse_paths"]

@@ -1,7 +1,7 @@
 """ONNX Runtime ラッパー — 埋め込み生成。
 
 sentence-transformers / torch / transformers に依存しない。
-モデルは ~/.devgear/models/ruri-v3-310m/model.onnx を使用する。
+モデルは ~/.devgear/models/model.onnx を使用する。
 install.sh が model_assembler.py を呼び出して統合済みファイルを生成する。
 """
 
@@ -15,15 +15,15 @@ from pathlib import Path
 from typing import Any
 
 from devgear.mem.logger import get as _get_logger
+from devgear.mem.model_assembler import _mean_pool_l2
 from devgear.mem.settings import _DEFAULT_EMBEDDING_MODEL, _DEFAULT_EMBEDDING_REVISION
 
 log = _get_logger("EMBEDDING")
 
-_MODEL_SUBDIR = "ruri-v3-310m"
 _SHA256_CHARS = frozenset("0123456789abcdef")
 
 # 統合済み model.onnx は ~/.devgear/models/ に格納（install.sh が配置）
-_MODELS_DIR = Path.home() / ".devgear" / "models" / _MODEL_SUBDIR
+_MODELS_DIR = Path.home() / ".devgear" / "models"
 
 # セッションはプロセス内でシングルトン（スレッドセーフ）
 _session: Any = None
@@ -47,11 +47,12 @@ def _verify_model_sha(models_dir: Path) -> None:
     """
     manifest_path = models_dir / "manifest.json"
     if not manifest_path.exists():
-        return  # manifest がない場合はスキップ
+        raise FileNotFoundError(
+            f"manifest.json が見つかりません: {manifest_path}\n"
+            "plugins/devgear/install.sh を実行してモデルを再統合してください。"
+        )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    expected = manifest.get("merged_sha256", "")
-    if not expected:
-        return
+    expected = manifest["merged_sha256"]
     _validate_sha256_format(expected, "merged_sha256")
     model_path = models_dir / "model.onnx"
     actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
@@ -67,8 +68,6 @@ def _verify_model_sha(models_dir: Path) -> None:
 def _verify_tokenizer(tok_path: Path, models_dir: Path) -> None:
     """manifest.json の auxiliary_files を参照して tokenizer.json の SHA256 を検証する。"""
     manifest_path = models_dir / "manifest.json"
-    if not manifest_path.exists():
-        return  # manifest がない場合はスキップ（テスト環境等）
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     for aux in manifest.get("auxiliary_files", []):
         if aux["name"] != "tokenizer.json":
@@ -83,6 +82,7 @@ def _verify_tokenizer(tok_path: Path, models_dir: Path) -> None:
                 f"  actual:   {actual}"
             )
         return
+    raise ValueError("manifest.json に tokenizer.json のエントリがありません")
 
 
 def _get_session() -> tuple[Any, Any]:
@@ -124,6 +124,8 @@ def _get_session() -> tuple[Any, Any]:
 
             sess_opts = ort.SessionOptions()
             sess_opts.log_severity_level = 3  # ERROR のみ
+            sess_opts.enable_mem_pattern = False
+            sess_opts.intra_op_num_threads = 1
             _session = ort.InferenceSession(
                 str(model_path),
                 sess_opts,
@@ -160,17 +162,7 @@ def _encode(texts: list[str]) -> list[list[float]]:
     outputs = session.run(None, inputs)
     token_embs = outputs[0]  # (batch, seq_len, hidden_dim)
 
-    # mean pooling（attention_mask で重み付け平均）
-    mask = attention_mask.astype(np.float32)[:, :, np.newaxis]  # (batch, seq_len, 1)
-    summed = (token_embs * mask).sum(axis=1)                     # (batch, hidden_dim)
-    counts = mask.sum(axis=1).clip(min=1e-9)                     # (batch, 1)
-    mean_vecs = summed / counts                                   # (batch, hidden_dim)
-
-    # L2 正規化
-    norms = np.linalg.norm(mean_vecs, axis=1, keepdims=True).clip(min=1e-9)
-    normalized = mean_vecs / norms
-
-    return normalized.tolist()
+    return _mean_pool_l2(token_embs, attention_mask).tolist()
 
 
 def embed(texts: list[str]) -> list[list[float]]:

@@ -13,16 +13,34 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger("MODEL_ASSEMBLER")
 
 _SHA256_CHARS = frozenset("0123456789abcdef")
 _CHUNK = 4 * 1024 * 1024  # 4 MB 読み取りバッファ
+
+# git@github.com:<owner>/<repo>.git 形式のみ許可
+_ALLOWED_REMOTE_RE = re.compile(r"^git@github\.com:[\w][\w.-]*/[\w][\w.-]*\.git$")
+
+# protocol.ext / protocol.file 悪用を全 git 呼び出しで禁止
+_GIT_SAFE_FLAGS = [
+    "-c", "protocol.ext.allow=never",
+    "-c", "protocol.file.allow=never",
+]
+# GIT プロンプト（SSH パスフレーズ等）を抑制する環境変数
+_GIT_SAFE_ENV = {
+    **os.environ,
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_ASKPASS": "/bin/true",
+}
 
 
 def _validate_sha256_format(value: str, label: str) -> None:
@@ -31,11 +49,38 @@ def _validate_sha256_format(value: str, label: str) -> None:
         raise ValueError(f"不正な SHA256 値 ({label}): '{value[:16]}...'")
 
 
+def _validate_remote(remote: str) -> None:
+    """git remote URL が許可リスト形式（git@github.com:<owner>/<repo>.git）に合致することを検証する。"""
+    if not _ALLOWED_REMOTE_RE.match(remote):
+        raise ValueError(f"許可されていない git remote 形式: '{remote[:64]}'")
+
+
+def _validate_git_commit(value: str) -> None:
+    """git commit が 40 桁または 64 桁の hex 文字列であることを検証する。"""
+    if len(value) not in (40, 64) or not all(c in _SHA256_CHARS for c in value):
+        raise ValueError(f"不正な git commit 形式: '{value[:16]}...'")
+
+
+def _validate_sparse_path(value: str) -> None:
+    """sparse_path がオプション偽装・パストラバーサル・絶対パスでないことを検証する。"""
+    if value.startswith("-"):
+        raise ValueError(f"sparse_path は '-' で始まることはできません: '{value}'")
+    if ".." in value.split("/"):
+        raise ValueError(f"sparse_path に '..' を含めることはできません: '{value}'")
+    if value.startswith("/"):
+        raise ValueError(f"sparse_path は絶対パスにできません: '{value}'")
+
+
+def _git(*args: str) -> list[str]:
+    """安全フラグ付き git コマンドのargv を返す。"""
+    return ["git"] + _GIT_SAFE_FLAGS + list(args)
+
+
 def _safe_join(base: Path, name: str) -> Path:
     """name を base に結合し、base 配下に収まることを検証する（パストラバーサル防止）。"""
     resolved = (base / name).resolve()
     base_resolved = base.resolve()
-    if not str(resolved).startswith(str(base_resolved) + "/") and resolved != base_resolved:
+    if resolved != base_resolved and not resolved.is_relative_to(base_resolved):
         raise ValueError(f"不正なパス: '{name}' は許可されたディレクトリ外を指しています")
     return resolved
 
@@ -49,11 +94,24 @@ def _sha256_path(path: Path) -> str:
     return h.hexdigest()
 
 
+_REQUIRED_SPEC_KEYS = ("schema_version", "git_remote", "git_commit", "sparse_paths", "merged_sha256", "parts", "auxiliary_files")
+
+
 def _load_sources_spec(sources_json: Path) -> dict:
-    """model_sources.json を読み込んで返す。"""
+    """model_sources.json を読み込み、必須フィールドとスキーマバージョンを検証して返す。"""
     if not sources_json.exists():
         raise FileNotFoundError(f"model_sources.json が見つかりません: {sources_json}")
-    return json.loads(sources_json.read_text(encoding="utf-8"))
+    spec = json.loads(sources_json.read_text(encoding="utf-8"))
+    for key in _REQUIRED_SPEC_KEYS:
+        if key not in spec:
+            raise ValueError(f"model_sources.json に必須キーがありません: '{key}'")
+    if spec["schema_version"] != 1:
+        raise ValueError(f"未対応の schema_version: {spec['schema_version']}")
+    if not spec["parts"]:
+        raise ValueError("model_sources.json の 'parts' が空です")
+    if not spec["sparse_paths"]:
+        raise ValueError("model_sources.json の 'sparse_paths' が空です")
+    return spec
 
 
 def _is_already_assembled(target_dir: Path, spec: dict) -> bool:
@@ -71,7 +129,7 @@ def _is_already_assembled(target_dir: Path, spec: dict) -> bool:
 
 
 def _sparse_checkout(spec: dict, work_dir: str) -> Path:
-    """git sparse-checkout で assets/models/ruri-v3-310m だけを取得する。
+    """git sparse-checkout で assets/models だけを取得する。
 
     work_dir は tempfile.TemporaryDirectory 内のパス。
     取得した sparse tree のルートディレクトリを返す。
@@ -80,37 +138,38 @@ def _sparse_checkout(spec: dict, work_dir: str) -> Path:
     commit: str = spec["git_commit"]
     sparse_paths: list[str] = spec["sparse_paths"]
 
+    _validate_remote(remote)
+    _validate_git_commit(commit)
+    for sp in sparse_paths:
+        _validate_sparse_path(sp)
+
     clone_dir = os.path.join(work_dir, "repo")
     os.makedirs(clone_dir)
 
     log.info("git sparse-checkout: %s@%s", remote, commit[:8])
 
+    def _run(*args: str) -> None:
+        """安全フラグ付き git を実行し、失敗時は stderr をログに出す。"""
+        try:
+            subprocess.run(
+                _git(*args),
+                check=True,
+                capture_output=True,
+                env=_GIT_SAFE_ENV,
+            )
+        except subprocess.CalledProcessError as exc:
+            log.error("git 失敗: %s\nstderr: %s", list(args), exc.stderr.decode(errors="replace"))
+            raise
+
     # クローン（blob なし、depth=1、チェックアウトなし）
-    subprocess.run(
-        ["git", "clone", "--filter=blob:none", "--no-checkout", "--depth=1",
-         "--sparse", remote, clone_dir],
-        check=True,
-        capture_output=True,
-    )
+    _run("clone", "--filter=blob:none", "--no-checkout", "--depth=1", "--sparse", remote, clone_dir)
 
     # sparse-checkout を cone モードで設定
-    subprocess.run(
-        ["git", "-C", clone_dir, "sparse-checkout", "init", "--cone"],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "-C", clone_dir, "sparse-checkout", "set"] + sparse_paths,
-        check=True,
-        capture_output=True,
-    )
+    _run("-C", clone_dir, "sparse-checkout", "init", "--cone")
+    _run("-C", clone_dir, "sparse-checkout", "set", *sparse_paths)
 
     # 指定 commit をチェックアウト
-    subprocess.run(
-        ["git", "-C", clone_dir, "checkout", commit],
-        check=True,
-        capture_output=True,
-    )
+    _run("-C", clone_dir, "checkout", commit)
 
     return Path(clone_dir)
 
@@ -122,7 +181,7 @@ def _verify_parts(assets_dir: Path, spec: dict) -> None:
         expected: str = part["sha256"]
         _validate_sha256_format(expected, name)
         # assets_dir 配下の sparse_paths[0] にファイルがある
-        sparse_rel = spec["sparse_paths"][0]  # e.g. "assets/models/ruri-v3-310m"
+        sparse_rel = spec["sparse_paths"][0]  # e.g. "assets/models"
         part_path = _safe_join(assets_dir / sparse_rel, name)
         if not part_path.exists():
             raise FileNotFoundError(f"part が見つかりません: {part_path}")
@@ -141,6 +200,8 @@ def _merge_and_verify(assets_dir: Path, target_dir: Path, spec: dict) -> None:
     sparse_rel = spec["sparse_paths"][0]
     model_src_dir = assets_dir / sparse_rel
 
+    if target_dir.is_symlink():
+        raise ValueError(f"target_dir はシンボリックリンクにできません: {target_dir}")
     target_dir.mkdir(parents=True, exist_ok=True)
     target_dir.chmod(0o700)
 
@@ -207,10 +268,23 @@ def _copy_auxiliary(assets_dir: Path, target_dir: Path, spec: dict) -> None:
         log.info("%s コピー完了", fname)
 
 
+def _mean_pool_l2(token_embs: Any, attention_mask: Any) -> Any:
+    """mean pooling + L2 正規化を適用する（ruri-v3 仕様）。
+
+    embedding.py の _encode と model_assembler の _sanity_inference で共用する。
+    """
+    import numpy as np  # type: ignore[import-untyped]
+
+    mask = attention_mask.astype(np.float32)[:, :, np.newaxis]
+    summed = (token_embs * mask).sum(axis=1)
+    counts = mask.sum(axis=1).clip(min=1e-9)
+    mean_vecs = summed / counts
+    norms = np.linalg.norm(mean_vecs, axis=1, keepdims=True).clip(min=1e-9)
+    return mean_vecs / norms
+
+
 def _sanity_inference(target_dir: Path) -> None:
     """ONNX 推論を 1 回実行し、dim=768 かつ L2 norm≈1.0 であることを確認する。"""
-    import math
-
     import numpy as np  # type: ignore[import-untyped]
     import onnxruntime as ort  # type: ignore[import-untyped]
     from tokenizers import Tokenizer  # type: ignore[import-untyped]
@@ -243,10 +317,7 @@ def _sanity_inference(target_dir: Path) -> None:
     outputs = session.run(None, inputs)
     token_embs = outputs[0]  # (1, seq_len, hidden_dim)
 
-    mask = attention_mask.astype(np.float32)[:, :, np.newaxis]
-    summed = (token_embs * mask).sum(axis=1)
-    counts = mask.sum(axis=1).clip(min=1e-9)
-    vec = (summed / counts)[0]
+    vec = _mean_pool_l2(token_embs, attention_mask)[0]
 
     norm = math.sqrt(float(np.dot(vec, vec)))
     dim = len(vec)
@@ -299,7 +370,7 @@ def main() -> None:
         "--target",
         type=Path,
         required=True,
-        help="統合先ディレクトリ（~/.devgear/models/ruri-v3-310m 等）",
+        help="統合先ディレクトリ（~/.devgear/models 等）",
     )
     args = parser.parse_args()
 

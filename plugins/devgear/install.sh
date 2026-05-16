@@ -201,7 +201,7 @@ install_user_python() {
   # ONNX モデルを sparse-checkout で取得し ~/.devgear/models/ に統合する
   # 統合済み model.onnx が存在して SHA が一致する場合はスキップする
   local sources_json="${SCRIPT_DIR}/model_sources.json"
-  local model_target="${HOME}/.devgear/models/ruri-v3-310m"
+  local model_target="${HOME}/.devgear/models"
   if [[ -f "${sources_json}" ]]; then
     echo "[devgear] ONNX モデルを統合しています: ${model_target}"
     "${VENV_PYTHON}" -m devgear.mem.model_assembler \

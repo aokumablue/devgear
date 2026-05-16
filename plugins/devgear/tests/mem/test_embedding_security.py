@@ -118,12 +118,16 @@ class TestModelPathValidation:
         monkeypatch.setitem(sys.modules, "tokenizers", types.SimpleNamespace(Tokenizer=FakeTok))
 
     def test_missing_manifest_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """manifest.json が存在しない場合に FileNotFoundError が発生する。"""
+        """manifest.json が存在しない場合に FileNotFoundError が発生する。
+
+        model.onnx と tokenizer.json が存在しても manifest.json がなければロードを拒否する。
+        """
         self._patch_ort(monkeypatch)
-        empty_dir = tmp_path / "empty"
-        empty_dir.mkdir()
-        (empty_dir / "tokenizer.json").write_bytes(b"{}")
-        monkeypatch.setattr(embedding, "_MODELS_DIR", empty_dir)
+        model_dir = tmp_path / "no_manifest"
+        model_dir.mkdir()
+        (model_dir / "model.onnx").write_bytes(b"x")
+        (model_dir / "tokenizer.json").write_bytes(b"{}")
+        monkeypatch.setattr(embedding, "_MODELS_DIR", model_dir)
         with pytest.raises(FileNotFoundError, match="manifest.json"):
             embedding.embed(["test"])
 

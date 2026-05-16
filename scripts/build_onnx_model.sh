@@ -7,7 +7,7 @@
 #   ./scripts/build_onnx_model.sh --quant int8           # INT8（動的量子化、約 300 MB）
 #   ./scripts/build_onnx_model.sh --quant fp16 --revision <SHA>
 #
-# 出力先: assets/models/ruri-v3-310m/
+# 出力先: assets/models/
 # 使用する venv: .venv-modelbuild/（リポ管理外、このスクリプトが自動作成）
 #
 # 量子化方式:
@@ -35,7 +35,7 @@ Options:
   --revision SHA           HF Hub commit SHA (default: settings.py の _DEFAULT_EMBEDDING_REVISION)
   --help                   このヘルプを表示
 
-出力先: assets/models/ruri-v3-310m/
+出力先: assets/models/
 EOF
 }
 
@@ -118,7 +118,7 @@ echo "[build] ONNX ビルドを実行しています..."
 PYTHONPATH="${SRC_DIR}" "${VENV_PYTHON}" -m model_build build "${BUILD_ARGS[@]}"
 
 echo "[build] ビルド成果物を検証しています..."
-OUT_DIR="${REPO_ROOT}/assets/models/ruri-v3-310m"
+OUT_DIR="${REPO_ROOT}/assets/models"
 PYTHONPATH="${SRC_DIR}" "${VENV_PYTHON}" -m model_build verify --model-dir "${OUT_DIR}"
 
 echo "[build] model_sources.json を生成しています..."

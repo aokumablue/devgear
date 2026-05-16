@@ -13,11 +13,16 @@ import pytest
 from devgear.mem.model_assembler import (
     _copy_auxiliary,
     _is_already_assembled,
+    _load_sources_spec,
+    _mean_pool_l2,
     _merge_and_verify,
     _safe_join,
     _sanity_inference,
     _sparse_checkout,
+    _validate_git_commit,
+    _validate_remote,
     _validate_sha256_format,
+    _validate_sparse_path,
     _verify_parts,
     assemble,
 )
@@ -67,77 +72,246 @@ def _make_spec(
         "model_name": "cl-nagoya/ruri-v3-310m",
         "git_remote": "git@example.com:repo.git",
         "git_commit": "a" * 40,
-        "sparse_paths": ["assets/models/ruri-v3-310m"],
+        "sparse_paths": ["assets/models"],
         "merged_sha256": merged_sha,
         "parts": parts,
         "auxiliary_files": aux_specs,
     }
 
 
+# ── _validate_remote ──────────────────────────────────────────────────────────
+
+class TestValidateRemote:
+    """_validate_remote の許可リスト検証テスト（Table-driven）。"""
+
+    @pytest.mark.parametrize("remote,expected_ok", [
+        ("git@github.com:aokumablue/devgear.git", True),
+        ("git@github.com:org/repo-name.git", True),
+        ("https://github.com/x/y.git", False),
+        ("git@evil.example.com:x/y.git", False),
+        ("ext::sh -c rm -rf /", False),
+        ("file:///etc/passwd", False),
+        ("", False),
+    ])
+    def test_validate_remote(self, remote: str, expected_ok: bool) -> None:
+        """許可リスト外は ValueError。"""
+        if expected_ok:
+            _validate_remote(remote)  # 例外なし
+        else:
+            with pytest.raises(ValueError, match="許可されていない"):
+                _validate_remote(remote)
+
+
+# ── _validate_git_commit ──────────────────────────────────────────────────────
+
+class TestValidateGitCommit:
+    """_validate_git_commit の Table-driven テスト。"""
+
+    @pytest.mark.parametrize("commit,expected_ok", [
+        ("a" * 40, True),
+        ("a" * 64, True),
+        ("a" * 39, False),
+        ("a" * 41, False),
+        ("g" * 40, False),
+        ("", False),
+    ])
+    def test_validate_git_commit(self, commit: str, expected_ok: bool) -> None:
+        """40 桁 / 64 桁 hex のみ受理。"""
+        if expected_ok:
+            _validate_git_commit(commit)
+        else:
+            with pytest.raises(ValueError, match="git commit"):
+                _validate_git_commit(commit)
+
+
+# ── _validate_sparse_path ─────────────────────────────────────────────────────
+
+class TestValidateSparsePath:
+    """_validate_sparse_path の Table-driven テスト。"""
+
+    @pytest.mark.parametrize("path,expected_ok", [
+        ("assets/models", True),
+        ("--upload-pack=evil", False),
+        ("../outside", False),
+        ("/etc/passwd", False),
+        ("a/../b", False),
+        ("ok/path", True),
+    ])
+    def test_validate_sparse_path(self, path: str, expected_ok: bool) -> None:
+        """オプション偽装・パストラバーサル・絶対パスを拒否。"""
+        if expected_ok:
+            _validate_sparse_path(path)
+        else:
+            with pytest.raises(ValueError):
+                _validate_sparse_path(path)
+
+
+# ── _mean_pool_l2 ─────────────────────────────────────────────────────────────
+
+class TestMeanPoolL2:
+    """_mean_pool_l2 の Table-driven テスト。"""
+
+    @pytest.mark.parametrize("desc,vec_factory,expected_norm_approx", [
+        ("単位ベクトル → norm=1", lambda np: _unit_vec(np), 1.0),
+        ("全ゼロ+clip → norm≈0", lambda np: _zero_vec(np), 0.0),
+        ("均一ベクトル → norm=1", lambda np: _uniform_vec(np), 1.0),
+    ])
+    def test_output_shape_and_norm(self, desc: str, vec_factory, expected_norm_approx: float) -> None:
+        """mean pooling + L2 正規化後の形状とノルムを確認。"""
+        import math
+
+        import numpy as np
+
+        token_embs, attention_mask = vec_factory(np)
+        result = _mean_pool_l2(token_embs, attention_mask)
+        assert result.shape == (1, token_embs.shape[2]), f"{desc}: shape 不正"
+        norm = math.sqrt(float(np.dot(result[0], result[0])))
+        assert abs(norm - expected_norm_approx) < 1e-3, f"{desc}: norm={norm:.6f}"
+
+
+def _unit_vec(np):
+    vec = np.zeros((1, 3, 4), dtype=np.float32)
+    vec[0, 0, 0] = 1.0
+    mask = np.array([[1, 1, 1]], dtype=np.int64)
+    return vec, mask
+
+
+def _zero_vec(np):
+    vec = np.zeros((1, 3, 4), dtype=np.float32)
+    mask = np.array([[1, 1, 1]], dtype=np.int64)
+    return vec, mask
+
+
+def _uniform_vec(np):
+    vec = np.ones((1, 3, 4), dtype=np.float32)
+    mask = np.array([[1, 1, 1]], dtype=np.int64)
+    return vec, mask
+
+
 # ── _validate_sha256_format ────────────────────────────────────────────────────
 
 class TestValidateSha256Format:
-    """_validate_sha256_format のテスト。"""
+    """_validate_sha256_format のテスト（Table-driven）。"""
 
-    def test_valid_sha(self) -> None:
-        """有効な SHA256 は例外なし。"""
-        _validate_sha256_format("a" * 64, "test")
-
-    def test_too_short_raises(self) -> None:
-        """短すぎる文字列は ValueError。"""
-        with pytest.raises(ValueError, match="不正な SHA256"):
-            _validate_sha256_format("a" * 63, "test")
-
-    def test_invalid_chars_raises(self) -> None:
-        """16進数以外の文字は ValueError。"""
-        with pytest.raises(ValueError, match="不正な SHA256"):
-            _validate_sha256_format("g" * 64, "test")
+    @pytest.mark.parametrize("value,expected_ok", [
+        ("a" * 64, True),
+        ("a" * 63, False),
+        ("a" * 65, False),
+        ("g" * 64, False),
+        ("", False),
+    ])
+    def test_validate(self, value: str, expected_ok: bool) -> None:
+        """64 文字の hex のみ受理。"""
+        if expected_ok:
+            _validate_sha256_format(value, "test")
+        else:
+            with pytest.raises(ValueError, match="不正な SHA256"):
+                _validate_sha256_format(value, "test")
 
 
 # ── _safe_join ────────────────────────────────────────────────────────────────
 
 class TestSafeJoin:
-    """_safe_join のテスト。"""
+    """_safe_join のテスト（Table-driven）。"""
 
-    def test_valid_path(self, tmp_path: Path) -> None:
-        """通常パスは base 配下のパスを返す。"""
-        result = _safe_join(tmp_path, "subdir/file.txt")
-        assert str(result).startswith(str(tmp_path))
-
-    def test_traversal_raises(self, tmp_path: Path) -> None:
-        """../ を含む名前は ValueError。"""
-        with pytest.raises(ValueError, match="不正なパス"):
-            _safe_join(tmp_path, "../outside.txt")
+    @pytest.mark.parametrize("name,expected_ok", [
+        ("subdir/file.txt", True),
+        ("file.txt", True),
+        ("../outside.txt", False),
+    ])
+    def test_safe_join(self, tmp_path: Path, name: str, expected_ok: bool) -> None:
+        """base 外へのトラバーサルは ValueError。"""
+        if expected_ok:
+            result = _safe_join(tmp_path, name)
+            assert str(result).startswith(str(tmp_path))
+        else:
+            with pytest.raises(ValueError, match="不正なパス"):
+                _safe_join(tmp_path, name)
 
 
 # ── _is_already_assembled ─────────────────────────────────────────────────────
 
 class TestIsAlreadyAssembled:
-    """_is_already_assembled のテスト。"""
+    """_is_already_assembled のテスト（Table-driven）。"""
 
-    def test_returns_false_when_no_model(self, tmp_path: Path) -> None:
-        """model.onnx がなければ False。"""
-        spec = {"merged_sha256": "a" * 64}
-        assert _is_already_assembled(tmp_path, spec) is False
+    @pytest.mark.parametrize("setup,expected", [
+        ("no_model", False),
+        ("sha_match", True),
+        ("sha_differ", False),
+        ("invalid_sha", False),
+    ])
+    def test_is_assembled(self, tmp_path: Path, setup: str, expected: bool) -> None:
+        """model.onnx の有無と SHA 一致状況で真偽値を返す。"""
+        spec: dict
+        if setup == "no_model":
+            spec = {"merged_sha256": "a" * 64}
+        elif setup == "sha_match":
+            data = b"model-data"
+            (tmp_path / "model.onnx").write_bytes(data)
+            spec = {"merged_sha256": _sha256(data)}
+        elif setup == "sha_differ":
+            (tmp_path / "model.onnx").write_bytes(b"model-data")
+            spec = {"merged_sha256": "b" * 64}
+        else:  # invalid_sha
+            (tmp_path / "model.onnx").write_bytes(b"x")
+            spec = {"merged_sha256": "invalid"}
+        assert _is_already_assembled(tmp_path, spec) is expected
 
-    def test_returns_true_when_sha_matches(self, tmp_path: Path) -> None:
-        """SHA が一致すれば True。"""
-        data = b"model-data"
-        (tmp_path / "model.onnx").write_bytes(data)
-        spec = {"merged_sha256": _sha256(data)}
-        assert _is_already_assembled(tmp_path, spec) is True
 
-    def test_returns_false_when_sha_differs(self, tmp_path: Path) -> None:
-        """SHA が不一致なら False。"""
-        (tmp_path / "model.onnx").write_bytes(b"model-data")
-        spec = {"merged_sha256": "b" * 64}
-        assert _is_already_assembled(tmp_path, spec) is False
+# ── _load_sources_spec ────────────────────────────────────────────────────────
 
-    def test_returns_false_on_invalid_sha_format(self, tmp_path: Path) -> None:
-        """不正な SHA 形式なら False（例外なし）。"""
-        (tmp_path / "model.onnx").write_bytes(b"x")
-        spec = {"merged_sha256": "invalid"}
-        assert _is_already_assembled(tmp_path, spec) is False
+class TestLoadSourcesSpec:
+    """_load_sources_spec のスキーマ検証テスト（Table-driven）。"""
+
+    def _base_spec(self) -> dict:
+        return {
+            "schema_version": 1,
+            "git_remote": "git@github.com:aokumablue/devgear.git",
+            "git_commit": "a" * 40,
+            "sparse_paths": ["assets/models"],
+            "merged_sha256": "a" * 64,
+            "parts": [{"name": "model.onnx.part00", "sha256": "a" * 64}],
+            "auxiliary_files": [{"name": "tokenizer.json", "sha256": "a" * 64}],
+        }
+
+    @pytest.mark.parametrize("missing_key", [
+        "schema_version", "git_remote", "git_commit", "sparse_paths",
+        "merged_sha256", "parts", "auxiliary_files",
+    ])
+    def test_missing_required_key_raises(self, tmp_path: Path, missing_key: str) -> None:
+        """必須キーが欠落すると ValueError。"""
+        spec = self._base_spec()
+        del spec[missing_key]
+        f = tmp_path / "model_sources.json"
+        f.write_text(json.dumps(spec))
+        with pytest.raises(ValueError, match=missing_key):
+            _load_sources_spec(f)
+
+    def test_unsupported_schema_version_raises(self, tmp_path: Path) -> None:
+        """schema_version != 1 は ValueError。"""
+        spec = self._base_spec()
+        spec["schema_version"] = 99
+        f = tmp_path / "model_sources.json"
+        f.write_text(json.dumps(spec))
+        with pytest.raises(ValueError, match="schema_version"):
+            _load_sources_spec(f)
+
+    def test_empty_parts_raises(self, tmp_path: Path) -> None:
+        """parts が空配列は ValueError。"""
+        spec = self._base_spec()
+        spec["parts"] = []
+        f = tmp_path / "model_sources.json"
+        f.write_text(json.dumps(spec))
+        with pytest.raises(ValueError, match="parts"):
+            _load_sources_spec(f)
+
+    def test_valid_spec_returns_dict(self, tmp_path: Path) -> None:
+        """正常な spec は dict を返す。"""
+        spec = self._base_spec()
+        f = tmp_path / "model_sources.json"
+        f.write_text(json.dumps(spec))
+        result = _load_sources_spec(f)
+        assert result["schema_version"] == 1
 
 
 # ── _verify_parts ─────────────────────────────────────────────────────────────
@@ -147,7 +321,7 @@ class TestVerifyParts:
 
     def _make_assets_dir(self, tmp_path: Path, parts_data: list[bytes]) -> tuple[Path, dict]:
         """tmp_path に sparse 構造を作り (assets_dir, spec) を返す。"""
-        sparse_rel = "assets/models/ruri-v3-310m"
+        sparse_rel = "assets/models"
         model_src = tmp_path / sparse_rel
         model_src.mkdir(parents=True)
         spec = _make_spec(model_src, parts_data)
@@ -183,7 +357,7 @@ class TestMergeAndVerify:
 
     def _setup(self, tmp_path: Path, parts_data: list[bytes]) -> tuple[Path, Path, dict]:
         """assets_dir と target_dir を作り (assets_dir, target_dir, spec) を返す。"""
-        sparse_rel = "assets/models/ruri-v3-310m"
+        sparse_rel = "assets/models"
         model_src = tmp_path / "repo" / sparse_rel
         model_src.mkdir(parents=True)
         spec = _make_spec(model_src, parts_data)
@@ -221,6 +395,15 @@ class TestMergeAndVerify:
         mode = oct(os.stat(target_dir).st_mode & 0o777)
         assert mode == oct(0o700)
 
+    def test_symlink_target_dir_raises(self, tmp_path: Path) -> None:
+        """target_dir がシンボリックリンクの場合は ValueError。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path, [b"x"])
+        real_dir = tmp_path / "real_target"
+        real_dir.mkdir()
+        target_dir.symlink_to(real_dir)
+        with pytest.raises(ValueError, match="シンボリックリンク"):
+            _merge_and_verify(assets_dir, target_dir, spec)
+
 
 # ── _copy_auxiliary ──────────────────────────────────────────────────────────
 
@@ -229,7 +412,7 @@ class TestCopyAuxiliary:
 
     def _setup(self, tmp_path: Path) -> tuple[Path, Path, dict]:
         """assets_dir と target_dir を作り (assets_dir, target_dir, spec) を返す。"""
-        sparse_rel = "assets/models/ruri-v3-310m"
+        sparse_rel = "assets/models"
         model_src = tmp_path / "repo" / sparse_rel
         model_src.mkdir(parents=True)
         spec = _make_spec(model_src, [b"x"])
@@ -280,47 +463,80 @@ class TestSparseCheckout:
     def test_calls_git_clone(self, tmp_path: Path) -> None:
         """subprocess.run が git clone を呼び出す。"""
         spec = {
-            "git_remote": "git@example.com:repo.git",
+            "git_remote": "git@github.com:aokumablue/devgear.git",
             "git_commit": "a" * 40,
-            "sparse_paths": ["assets/models/ruri-v3-310m"],
+            "sparse_paths": ["assets/models"],
         }
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
-            # 実際には repo ディレクトリを作らないのでエラーになるが、
-            # ここでは subprocess 呼び出しの引数のみ検証する
-            try:
-                _sparse_checkout(spec, str(tmp_path))
-            except Exception:
-                pass
+            _sparse_checkout(spec, str(tmp_path))
 
         first_call = mock_run.call_args_list[0]
         cmd = first_call[0][0]
         assert cmd[0] == "git"
         assert "clone" in cmd
-        assert "git@example.com:repo.git" in cmd
+        assert "git@github.com:aokumablue/devgear.git" in cmd
 
-    def test_uses_env_override(self, tmp_path: Path) -> None:
+    def test_protocol_allowlist_in_argv(self, tmp_path: Path) -> None:
+        """全 git 呼び出しに protocol.ext.allow=never が含まれる。"""
+        spec = {
+            "git_remote": "git@github.com:aokumablue/devgear.git",
+            "git_commit": "a" * 40,
+            "sparse_paths": ["assets/models"],
+        }
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            _sparse_checkout(spec, str(tmp_path))
+
+        for call in mock_run.call_args_list:
+            cmd = call[0][0]
+            assert "protocol.ext.allow=never" in cmd, f"安全フラグ未付与: {cmd}"
+
+    def test_invalid_remote_raises(self, tmp_path: Path) -> None:
+        """許可リスト外の git_remote は ValueError。"""
+        spec = {
+            "git_remote": "https://evil.example.com/repo.git",
+            "git_commit": "a" * 40,
+            "sparse_paths": ["assets/models"],
+        }
+        with pytest.raises(ValueError, match="許可されていない"):
+            _sparse_checkout(spec, str(tmp_path))
+
+    def test_uses_env_override(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """DEVGEAR_MODEL_REMOTE が設定されていれば優先される。"""
         spec = {
-            "git_remote": "git@example.com:original.git",
+            "git_remote": "git@github.com:aokumablue/devgear.git",
             "git_commit": "b" * 40,
-            "sparse_paths": ["assets/models/ruri-v3-310m"],
+            "sparse_paths": ["assets/models"],
         }
-        override = "git@example.com:override.git"
+        override = "git@github.com:aokumablue/override.git"
 
-        with patch.dict(os.environ, {"DEVGEAR_MODEL_REMOTE": override}):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 0
-                try:
-                    _sparse_checkout(spec, str(tmp_path))
-                except Exception:
-                    pass
+        monkeypatch.delenv("DEVGEAR_MODEL_REMOTE", raising=False)
+        monkeypatch.setenv("DEVGEAR_MODEL_REMOTE", override)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            _sparse_checkout(spec, str(tmp_path))
 
         first_call = mock_run.call_args_list[0]
         cmd = first_call[0][0]
         assert override in cmd
-        assert "git@example.com:original.git" not in cmd
+        assert "git@github.com:aokumablue/devgear.git" not in cmd
+
+    def test_invalid_env_override_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """許可リスト外の DEVGEAR_MODEL_REMOTE は ValueError。"""
+        spec = {
+            "git_remote": "git@github.com:aokumablue/devgear.git",
+            "git_commit": "a" * 40,
+            "sparse_paths": ["assets/models"],
+        }
+        monkeypatch.delenv("DEVGEAR_MODEL_REMOTE", raising=False)
+        monkeypatch.setenv("DEVGEAR_MODEL_REMOTE", "ext::sh -c 'echo PWN'")
+
+        with pytest.raises(ValueError, match="許可されていない"):
+            _sparse_checkout(spec, str(tmp_path))
 
 
 # ── _sanity_inference（ORT モック）──────────────────────────────────────────
@@ -337,12 +553,12 @@ class TestSanityInference:
 
         import numpy as np
 
-        # 単位ベクトル or ノルム不正ベクトルを作る
+        # 単位ベクトル or ゼロベクトルを作る
         if norm_ok:
             vec = np.zeros((1, 1, dim), dtype=np.float32)
-            vec[0, 0, 0] = 1.0  # norm=1
+            vec[0, 0, 0] = 1.0  # mean pooling + 正規化後 norm=1
         else:
-            vec = np.ones((1, 1, dim), dtype=np.float32) * 100.0  # norm≫1
+            vec = np.zeros((1, 1, dim), dtype=np.float32)  # ゼロベクトル → clip(min=1e-9) → 分母≈1e-9 → norm≈0
 
         mock_session = MagicMock()
         mock_session.run.return_value = [vec]
@@ -394,10 +610,10 @@ class TestAssemble:
 
     def _setup_sources(self, tmp_path: Path) -> tuple[Path, Path, dict]:
         """
-        tmp_path/assets/models/ruri-v3-310m にファイルを配置し、
+        tmp_path/assets/models にファイルを配置し、
         model_sources.json を生成して (sources_json, target_dir, spec) を返す。
         """
-        model_src = tmp_path / "assets" / "models" / "ruri-v3-310m"
+        model_src = tmp_path / "assets" / "models"
         model_src.mkdir(parents=True)
         parts_data = [b"chunk0", b"chunk1"]
         spec = _make_spec(model_src, parts_data)
@@ -414,7 +630,7 @@ class TestAssemble:
 
     def test_assemble_creates_model_onnx(self, tmp_path: Path) -> None:
         """assemble() が model.onnx を target に生成する。"""
-        sources_json, target, spec = self._setup_sources(tmp_path)
+        sources_json, target, _ = self._setup_sources(tmp_path)
         assets_root = tmp_path  # repo ルートとして使う
 
         import numpy as np
@@ -442,7 +658,7 @@ class TestAssemble:
 
     def test_assemble_skips_when_already_assembled(self, tmp_path: Path) -> None:
         """SHA が一致する model.onnx が既にあれば sparse_checkout を呼ばない。"""
-        sources_json, target, spec = self._setup_sources(tmp_path)
+        sources_json, target, _ = self._setup_sources(tmp_path)
 
         # 既に統合済みにする
         merged = b"chunk0chunk1"
