@@ -11,21 +11,41 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 from model_build.quantize import DEFAULT_QUANT, QUANT_CHOICES
 
-# デフォルト値（settings.py に合わせて維持）
-_DEFAULT_MODEL = "cl-nagoya/ruri-v3-310m"
-_DEFAULT_REVISION = "18b60fb8c2b9df296fb4212bb7d23ef94e579cd3"
-_DEFAULT_OUT = Path(__file__).resolve().parents[2] / "assets" / "models"
-_DEFAULT_SOURCES_OUT = (
-    Path(__file__).resolve().parents[2] / "plugins" / "devgear" / "model_sources.json"
-)
-# デフォルトの git remote（SSH）
-_DEFAULT_GIT_REMOTE = "git@github.com:aokumablue/devgear.git"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_BUILD_CONFIG_PATH = Path(__file__).resolve().parent / "build_config.json"
+_DEFAULT_OUT = _REPO_ROOT / "assets" / "models"
+_DEFAULT_SOURCES_OUT = _REPO_ROOT / "plugins" / "devgear" / "model_sources.json"
+
+
+def _load_build_config() -> dict:
+    """build_config.json を読み込み、モデルメタデータを返す。"""
+    if not _BUILD_CONFIG_PATH.exists():
+        raise FileNotFoundError(f"build_config.json が見つかりません: {_BUILD_CONFIG_PATH}")
+    config = json.loads(_BUILD_CONFIG_PATH.read_text(encoding="utf-8"))
+    for key in ("model_name", "hf_revision", "model_type", "num_heads", "hidden_size", "embedding_dim", "tokenizer_max_length"):
+        if key not in config:
+            raise ValueError(f"build_config.json に必須キーがありません: '{key}'")
+    return config
+
+
+def _default_git_remote() -> str:
+    """現在のリポの git remote origin URL を取得する。失敗時はフォールバック値を返す。"""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "git@github.com:aokumablue/devgear.git"
 
 
 def _cmd_build(args: argparse.Namespace) -> None:
@@ -36,6 +56,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
     from model_build.quantize import quantize
     from model_build.split import split
 
+    build_cfg = _load_build_config()
     output_dir: Path = args.out
     quant: str = args.quant
 
@@ -56,7 +77,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
         # Step 2: 量子化（fp32: コピー、fp16: ort optimizer、int8: 動的量子化）
         print(f"[build] Step 2/3: 量子化 ({quant})", flush=True)
         quant_onnx = tmp_path / f"model_{quant}.onnx"
-        quantize(raw_onnx, quant_onnx, quant)
+        quantize(raw_onnx, quant_onnx, quant, num_heads=build_cfg["num_heads"], hidden_size=build_cfg["hidden_size"])
 
         # tokenizer.json / config.json を取得（エクスポート出力から）
         onnx_export_dir = raw_onnx.parent
@@ -77,6 +98,8 @@ def _cmd_build(args: argparse.Namespace) -> None:
             model_name=args.model,
             hf_revision=args.revision,
             quant=quant,
+            embedding_dim=build_cfg["embedding_dim"],
+            tokenizer_max_length=build_cfg["tokenizer_max_length"],
         )
 
     print("[build] 完了", flush=True)
@@ -90,8 +113,14 @@ def _cmd_verify(args: argparse.Namespace) -> None:
 
 
 def _cmd_clean(args: argparse.Namespace) -> None:
-    """output_dir の part ファイルと manifest を削除する。"""
+    """output_dir の part ファイルと manifest を削除する。
+
+    symlink は対象外（assets/models は実ファイル前提）。
+    """
     output_dir: Path = args.out
+    if not output_dir.exists():
+        print(f"[clean] ディレクトリが存在しません: {output_dir}", flush=True)
+        return
     removed = 0
     for p in sorted(output_dir.glob("model.onnx.part*")):
         p.unlink()
@@ -101,6 +130,18 @@ def _cmd_clean(args: argparse.Namespace) -> None:
         manifest.unlink()
         removed += 1
     print(f"[clean] {removed} ファイルを削除しました: {output_dir}", flush=True)
+
+
+def _get_git_head() -> str:
+    """現在の git HEAD SHA を取得する（シェルインジェクション防止）。"""
+    import subprocess
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def _cmd_sources(args: argparse.Namespace) -> None:
@@ -119,14 +160,7 @@ def _cmd_sources(args: argparse.Namespace) -> None:
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    # 現在の git HEAD SHA を取得（subprocess でシェルインジェクション防止）
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    git_commit = result.stdout.strip()
+    git_commit = _get_git_head()
 
     # assets/models への sparse path（リポルートからの相対パス）
     sparse_path = "assets/models"
@@ -161,9 +195,10 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     # --- build ---
+    _build_cfg = _load_build_config()
     p_build = sub.add_parser("build", help="ONNX 変換・量子化・分割を一括実行")
-    p_build.add_argument("--model", default=_DEFAULT_MODEL, help="HF Hub モデル ID")
-    p_build.add_argument("--revision", default=_DEFAULT_REVISION, help="HF Hub commit SHA")
+    p_build.add_argument("--model", default=_build_cfg["model_name"], help="HF Hub モデル ID")
+    p_build.add_argument("--revision", default=_build_cfg["hf_revision"], help="HF Hub commit SHA")
     p_build.add_argument(
         "--quant",
         default=DEFAULT_QUANT,
@@ -207,8 +242,8 @@ def main() -> None:
     )
     p_sources.add_argument(
         "--git-remote",
-        default=_DEFAULT_GIT_REMOTE,
-        help="git remote URL (default: SSH origin)",
+        default=_default_git_remote(),
+        help="git remote URL (default: git remote get-url origin)",
     )
 
     args = parser.parse_args()

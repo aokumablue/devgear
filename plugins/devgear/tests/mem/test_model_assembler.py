@@ -10,18 +10,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from devgear.mem._paths import safe_join as _safe_join
+from devgear.mem._paths import validate_sha256_format as _validate_sha256_format
 from devgear.mem.model_assembler import (
     _copy_auxiliary,
     _is_already_assembled,
     _load_sources_spec,
     _mean_pool_l2,
     _merge_and_verify,
-    _safe_join,
     _sanity_inference,
     _sparse_checkout,
     _validate_git_commit,
     _validate_remote,
-    _validate_sha256_format,
     _validate_sparse_path,
     _verify_parts,
     assemble,
@@ -305,6 +305,20 @@ class TestLoadSourcesSpec:
         with pytest.raises(ValueError, match="parts"):
             _load_sources_spec(f)
 
+    def test_file_not_found_raises(self, tmp_path: Path) -> None:
+        """ファイルが存在しない場合は FileNotFoundError。"""
+        with pytest.raises(FileNotFoundError, match="model_sources.json"):
+            _load_sources_spec(tmp_path / "no_such.json")
+
+    def test_empty_sparse_paths_raises(self, tmp_path: Path) -> None:
+        """sparse_paths が空配列は ValueError。"""
+        spec = self._base_spec()
+        spec["sparse_paths"] = []
+        f = tmp_path / "model_sources.json"
+        f.write_text(json.dumps(spec))
+        with pytest.raises(ValueError, match="sparse_paths"):
+            _load_sources_spec(f)
+
     def test_valid_spec_returns_dict(self, tmp_path: Path) -> None:
         """正常な spec は dict を返す。"""
         spec = self._base_spec()
@@ -347,6 +361,28 @@ class TestVerifyParts:
         sparse_rel = spec["sparse_paths"][0]
         (assets_dir / sparse_rel / "model.onnx.part00").unlink()
         with pytest.raises(FileNotFoundError, match="part が見つかりません"):
+            _verify_parts(assets_dir, spec)
+
+    def test_wrong_prefix_raises(self, tmp_path: Path) -> None:
+        """model.onnx.part プレフィックスでない名前は ValueError。"""
+        assets_dir, spec = self._make_assets_dir(tmp_path, [b"data"])
+        spec["parts"][0]["name"] = "evil.onnx.part00"
+        with pytest.raises(ValueError, match="名前が不正"):
+            _verify_parts(assets_dir, spec)
+
+    def test_non_numeric_index_raises(self, tmp_path: Path) -> None:
+        """インデックスが数値でない場合は ValueError。"""
+        assets_dir, spec = self._make_assets_dir(tmp_path, [b"data"])
+        spec["parts"][0]["name"] = "model.onnx.partAB"
+        with pytest.raises(ValueError, match="数値でない"):
+            _verify_parts(assets_dir, spec)
+
+    def test_out_of_order_parts_raises(self, tmp_path: Path) -> None:
+        """parts が単調増加でない（part01,part00 の順）は ValueError。"""
+        assets_dir, spec = self._make_assets_dir(tmp_path, [b"p0", b"p1"])
+        # 順序を入れ替え
+        spec["parts"] = list(reversed(spec["parts"]))
+        with pytest.raises(ValueError, match="順序が不正"):
             _verify_parts(assets_dir, spec)
 
 
@@ -454,6 +490,15 @@ class TestCopyAuxiliary:
         with pytest.raises(FileNotFoundError, match="manifest.json"):
             _copy_auxiliary(assets_dir, target_dir, spec)
 
+    def test_missing_tokenizer_skips_with_warning(self, tmp_path: Path) -> None:
+        """tokenizer.json がない場合は警告ログを出してスキップ（エラーにならない）。"""
+        assets_dir, target_dir, spec = self._setup(tmp_path)
+        sparse_rel = spec["sparse_paths"][0]
+        (assets_dir / sparse_rel / "tokenizer.json").unlink()
+        # 例外なく完了する
+        _copy_auxiliary(assets_dir, target_dir, spec)
+        assert not (target_dir / "tokenizer.json").exists()
+
 
 # ── _sparse_checkout（subprocess モック）────────────────────────────────────
 
@@ -470,7 +515,7 @@ class TestSparseCheckout:
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
-            _sparse_checkout(spec, str(tmp_path))
+            _sparse_checkout(spec, tmp_path)
 
         first_call = mock_run.call_args_list[0]
         cmd = first_call[0][0]
@@ -488,7 +533,7 @@ class TestSparseCheckout:
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
-            _sparse_checkout(spec, str(tmp_path))
+            _sparse_checkout(spec, tmp_path)
 
         for call in mock_run.call_args_list:
             cmd = call[0][0]
@@ -502,10 +547,10 @@ class TestSparseCheckout:
             "sparse_paths": ["assets/models"],
         }
         with pytest.raises(ValueError, match="許可されていない"):
-            _sparse_checkout(spec, str(tmp_path))
+            _sparse_checkout(spec, tmp_path)
 
     def test_uses_env_override(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """DEVGEAR_MODEL_REMOTE が設定されていれば優先される。"""
+        """DEVGEAR_TESTING=1 のとき DEVGEAR_MODEL_REMOTE が優先される。"""
         spec = {
             "git_remote": "git@github.com:aokumablue/devgear.git",
             "git_commit": "b" * 40,
@@ -513,30 +558,68 @@ class TestSparseCheckout:
         }
         override = "git@github.com:aokumablue/override.git"
 
+        monkeypatch.setenv("DEVGEAR_TESTING", "1")
         monkeypatch.delenv("DEVGEAR_MODEL_REMOTE", raising=False)
         monkeypatch.setenv("DEVGEAR_MODEL_REMOTE", override)
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
-            _sparse_checkout(spec, str(tmp_path))
+            _sparse_checkout(spec, tmp_path)
 
         first_call = mock_run.call_args_list[0]
         cmd = first_call[0][0]
         assert override in cmd
         assert "git@github.com:aokumablue/devgear.git" not in cmd
 
+    def test_env_override_ignored_without_testing_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """DEVGEAR_TESTING=1 なしでは DEVGEAR_MODEL_REMOTE が無視され spec の remote が使われる。"""
+        spec = {
+            "git_remote": "git@github.com:aokumablue/devgear.git",
+            "git_commit": "b" * 40,
+            "sparse_paths": ["assets/models"],
+        }
+        override = "git@github.com:aokumablue/override.git"
+
+        monkeypatch.delenv("DEVGEAR_TESTING", raising=False)
+        monkeypatch.setenv("DEVGEAR_MODEL_REMOTE", override)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            _sparse_checkout(spec, tmp_path)
+
+        first_call = mock_run.call_args_list[0]
+        cmd = first_call[0][0]
+        assert "git@github.com:aokumablue/devgear.git" in cmd
+        assert override not in cmd
+
     def test_invalid_env_override_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """許可リスト外の DEVGEAR_MODEL_REMOTE は ValueError。"""
+        """DEVGEAR_TESTING=1 時に許可リスト外の DEVGEAR_MODEL_REMOTE は ValueError。"""
         spec = {
             "git_remote": "git@github.com:aokumablue/devgear.git",
             "git_commit": "a" * 40,
             "sparse_paths": ["assets/models"],
         }
+        monkeypatch.setenv("DEVGEAR_TESTING", "1")
         monkeypatch.delenv("DEVGEAR_MODEL_REMOTE", raising=False)
         monkeypatch.setenv("DEVGEAR_MODEL_REMOTE", "ext::sh -c 'echo PWN'")
 
         with pytest.raises(ValueError, match="許可されていない"):
-            _sparse_checkout(spec, str(tmp_path))
+            _sparse_checkout(spec, tmp_path)
+
+    def test_git_failure_logs_and_reraises(self, tmp_path: Path) -> None:
+        """git コマンド失敗時に stderr をログに出力し CalledProcessError を再 raise する。"""
+        import subprocess
+
+        spec = {
+            "git_remote": "git@github.com:aokumablue/devgear.git",
+            "git_commit": "a" * 40,
+            "sparse_paths": ["assets/models"],
+        }
+
+        err = subprocess.CalledProcessError(1, ["git"], stderr=b"fatal: repository not found")
+        with patch("subprocess.run", side_effect=err):
+            with pytest.raises(subprocess.CalledProcessError):
+                _sparse_checkout(spec, tmp_path)
 
 
 # ── _sanity_inference（ORT モック）──────────────────────────────────────────
@@ -601,6 +684,25 @@ class TestSanityInference:
              patch("tokenizers.Tokenizer.from_file", return_value=mock_tokenizer):
             with pytest.raises(ValueError, match="L2 ノルム"):
                 _sanity_inference(target)
+
+    def test_with_token_type_ids_input(self, tmp_path: Path) -> None:
+        """token_type_ids 入力が必要なモデルでも例外なく動作する。"""
+        target, mock_session, mock_tokenizer = self._make_target(tmp_path)
+
+        class FakeInput:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        mock_session.get_inputs.return_value = [
+            FakeInput("input_ids"),
+            FakeInput("attention_mask"),
+            FakeInput("token_type_ids"),
+        ]
+
+        with patch("onnxruntime.InferenceSession", return_value=mock_session), \
+             patch("onnxruntime.SessionOptions"), \
+             patch("tokenizers.Tokenizer.from_file", return_value=mock_tokenizer):
+            _sanity_inference(target)
 
 
 # ── assemble E2E（sparse_checkout をモック）──────────────────────────────────

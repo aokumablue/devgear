@@ -6,6 +6,7 @@
 #   bash install.sh
 #   bash install.sh --repo-root /path/to/repo
 #   DEVGEAR_INSTALL_SKIP_PYTHON=1 bash install.sh
+#   DEVGEAR_INSTALL_ASSUME_YES=1 bash install.sh  # sudo パッケージインストールを自動許可
 
 set -euo pipefail
 
@@ -13,6 +14,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
 SKIP_PYTHON="${DEVGEAR_INSTALL_SKIP_PYTHON:-0}"
 INSTALL_DEV="${DEVGEAR_INSTALL_DEV:-0}"
+# sudo インストールの明示オプトイン（DEVGEAR_INSTALL_ASSUME_YES=1 または --assume-yes）
+ASSUME_YES="${DEVGEAR_INSTALL_ASSUME_YES:-0}"
 # --dev を除く引数を install-dev.sh へ転送するために正規化して保持する
 NORMALIZED_ARGS=()
 
@@ -24,24 +27,26 @@ Options:
   --repo-root PATH   Repository root (default: script directory)
   --skip-python      Skip Python package installation and venv setup
   --dev              Run the developer installer instead of the user installer
+  --assume-yes       Allow sudo package installation without confirmation
   --help             Show this help
 
 Environment:
   DEVGEAR_INSTALL_SKIP_PYTHON=1  Skip Python package installation and venv setup
   DEVGEAR_INSTALL_DEV=1          Run the developer installer instead of the user installer
+  DEVGEAR_INSTALL_ASSUME_YES=1   Allow sudo package installation without confirmation
 EOF
 }
 
 run_quietly() {
   local output_file
   output_file="$(mktemp)"
+  # mktemp の一時ファイルをシェル終了・エラー時に確実削除する
+  trap 'rm -f "${output_file}"' RETURN
   if "$@" >"${output_file}" 2>&1; then
-    rm -f "${output_file}"
     return 0
   else
     local status=$?
     cat "${output_file}" >&2
-    rm -f "${output_file}"
     return "${status}"
   fi
 }
@@ -73,19 +78,30 @@ ensure_venv_module() {
 
   echo "[devgear] python3-venv not found. Attempting to install..."
 
+  # sudo インストールに明示的な許可が必要
+  if [[ "${ASSUME_YES}" != "1" ]]; then
+    echo "[devgear] sudo を使って python3-venv をインストールします。" >&2
+    echo "[devgear] 許可するには DEVGEAR_INSTALL_ASSUME_YES=1 を設定するか --assume-yes を指定してください。" >&2
+    exit 1
+  fi
+
   local py_ver
   py_ver="$("${PYTHON3}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 
   if command -v apt-get >/dev/null 2>&1; then
+    echo "[devgear] sudo apt-get install python${py_ver}-venv を実行します"
     sudo apt-get update -qq
     sudo apt-get install -y "python${py_ver}-venv" \
       || sudo apt-get install -y python3-venv
   elif command -v dnf >/dev/null 2>&1; then
+    echo "[devgear] sudo dnf install python${py_ver}-devel python3-virtualenv を実行します"
     sudo dnf install -y "python${py_ver}-devel" python3-virtualenv \
       || sudo dnf install -y python3-virtualenv
   elif command -v yum >/dev/null 2>&1; then
+    echo "[devgear] sudo yum install python3-virtualenv を実行します"
     sudo yum install -y python3-virtualenv
   elif command -v brew >/dev/null 2>&1; then
+    echo "[devgear] brew install python@${py_ver} を実行します"
     brew install "python@${py_ver}" || brew install python3
   else
     echo "Error: python3-venv が見つからず、自動インストールにも失敗しました。" >&2
@@ -100,26 +116,12 @@ ensure_venv_module() {
   echo "[devgear] python3-venv インストール完了"
 }
 
-# 既存 venv に旧依存（ONNX 移行前のパッケージ）が残っていれば削除して再作成させる
+# 既存 venv の stale symlink を削除する
 check_and_reset_venv() {
   # 壊れたシンボリックリンク（自己参照含む）は即削除
   if [[ -L "${VENV_DIR}" ]]; then
     echo "[devgear] Removing stale .venv symlink at ${VENV_DIR}"
-    rm -f "${VENV_DIR}"
-    return 0
-  fi
-  [[ ! -x "${VENV_PYTHON}" ]] && return 0
-  # ONNX 移行前の重量級パッケージが残っている旧 venv を再構築
-  local has_legacy
-  has_legacy="$("${VENV_PYTHON}" -c "
-from importlib.metadata import packages_distributions, PackageNotFoundError
-pkgs = packages_distributions()
-legacy = any(p in pkgs for p in ('sentence_transformers', 'torch', 'transformers'))
-print('1' if legacy else '0')
-" 2>/dev/null || echo 0)"
-  if [[ "${has_legacy}" == "1" ]]; then
-    echo "[devgear] 旧依存 (sentence-transformers / PyTorch 系) を検出しました。venv を再構築します..."
-    rm -rf "${VENV_DIR}"
+    rm -f -- "${VENV_DIR}"
   fi
 }
 
@@ -219,6 +221,74 @@ install_user_python() {
   fi
 }
 
+# Claude Code キャッシュに .venv シンボリックリンクを張る
+# TOCTOU 対策: 対象が devgear venv (pyvenv.cfg 存在) ならスキップ。symlink / 不存在のみ操作する。
+update_claude_cache_symlinks() {
+  [[ -d "${HOME}/.claude/plugins/cache/devgear" ]] || return 0
+
+  for org_dir in "${HOME}/.claude/plugins/cache/devgear"/*; do
+    [[ -L "${org_dir}" ]] && continue
+    [[ -d "${org_dir}" ]] || continue
+    for ver_dir in "${org_dir}"/*; do
+      [[ -L "${ver_dir}" ]] && continue
+      [[ -d "${ver_dir}" ]] || continue
+      local target_venv="${ver_dir}/.venv"
+      # VENV_DIR 自身はスキップ
+      if [[ "${target_venv}" == "${VENV_DIR}" ]]; then
+        echo "[devgear] Claude cache .venv is the install target itself, skipping symlink"
+        continue
+      fi
+      # 既に正しいリンクが張られている場合はスキップ
+      if [[ -L "${target_venv}" && "$(readlink "${target_venv}")" == "${VENV_DIR}" ]]; then
+        echo "[devgear] Claude cache .venv already linked: ${target_venv}"
+        continue
+      fi
+      # 実体 venv（pyvenv.cfg が存在）は上書きしない（TOCTOU 保護）
+      if [[ -e "${target_venv}/pyvenv.cfg" ]]; then
+        echo "[devgear] Warning: ${target_venv} は実体 venv のためスキップします" >&2
+        continue
+      fi
+      # symlink または不存在のみ操作（それ以外はスキップ）
+      if [[ ! -L "${target_venv}" && -e "${target_venv}" ]]; then
+        echo "[devgear] Warning: ${target_venv} は予期しないファイル種別のためスキップします" >&2
+        continue
+      fi
+      echo "[devgear] Symlinking .venv into Claude cache: ${target_venv} -> ${VENV_DIR}"
+      rm -- "${target_venv}" 2>/dev/null || true
+      ln -sfn -- "${VENV_DIR}" "${target_venv}"
+    done
+  done
+}
+
+# Copilot キャッシュに .venv シンボリックリンクを張る
+# TOCTOU 対策: update_claude_cache_symlinks と同じ保護を適用する。
+update_copilot_cache_symlink() {
+  local copilot_plugin_dir="${HOME}/.copilot/installed-plugins/devgear/devgear"
+  [[ -d "${copilot_plugin_dir}" ]] || return 0
+
+  local target_venv="${copilot_plugin_dir}/.venv"
+  if [[ "${target_venv}" == "${VENV_DIR}" ]]; then
+    echo "[devgear] Copilot cache .venv is the install target itself, skipping symlink"
+    return 0
+  fi
+  if [[ -L "${target_venv}" && "$(readlink "${target_venv}")" == "${VENV_DIR}" ]]; then
+    echo "[devgear] Copilot cache .venv already linked: ${target_venv}"
+    return 0
+  fi
+  # 実体 venv は上書きしない
+  if [[ -e "${target_venv}/pyvenv.cfg" ]]; then
+    echo "[devgear] Warning: ${target_venv} は実体 venv のためスキップします" >&2
+    return 0
+  fi
+  if [[ ! -L "${target_venv}" && -e "${target_venv}" ]]; then
+    echo "[devgear] Warning: ${target_venv} は予期しないファイル種別のためスキップします" >&2
+    return 0
+  fi
+  echo "[devgear] Symlinking .venv into Copilot cache: ${target_venv} -> ${VENV_DIR}"
+  rm -- "${target_venv}" 2>/dev/null || true
+  ln -sfn -- "${VENV_DIR}" "${target_venv}"
+}
+
 # ---- 引数パース ----
 
 while [[ $# -gt 0 ]]; do
@@ -236,6 +306,10 @@ while [[ $# -gt 0 ]]; do
     --dev)
       INSTALL_DEV=1
       # --dev は install-dev.sh へ転送しない（再帰呼び出し防止）
+      shift
+      ;;
+    --assume-yes)
+      ASSUME_YES=1
       shift
       ;;
     --help)
@@ -284,46 +358,8 @@ if [[ "${SKIP_PYTHON}" != "1" ]]; then
   install_user_python
 fi
 
-# Claude Code キャッシュ: ~/.claude/plugins/cache/devgear/<org>/<version>/
-# launcher.py は src/devgear/launcher.py なので parents[2] = <version>/ が REPO_ROOT になる。
-# よって .venv は <version>/.venv に置く必要がある。
-if [[ -d "${HOME}/.claude/plugins/cache/devgear" ]]; then
-  for org_dir in "${HOME}/.claude/plugins/cache/devgear"/*; do
-    [[ -L "$org_dir" ]] && continue
-    [[ -d "$org_dir" ]] || continue
-    for ver_dir in "$org_dir"/*; do
-      [[ -L "$ver_dir" ]] && continue
-      [[ -d "$ver_dir" ]] || continue
-      local_venv="${ver_dir}/.venv"
-      # VENV_DIR 自身（実行ディレクトリが既にキャッシュ内の場合）はスキップ
-      if [[ "${local_venv}" == "${VENV_DIR}" ]]; then
-        echo "[devgear] Claude cache .venv is the install target itself, skipping symlink"
-      elif [[ -L "${local_venv}" && "$(readlink "${local_venv}")" == "${VENV_DIR}" ]]; then
-        echo "[devgear] Claude cache .venv already linked: ${local_venv}"
-      else
-        echo "[devgear] Symlinking .venv into Claude cache: ${local_venv} -> ${VENV_DIR}"
-        rm -rf "${local_venv}"
-        ln -s "${VENV_DIR}" "${local_venv}"
-      fi
-    done
-  done
-fi
-
-# Copilot キャッシュ: ~/.copilot/installed-plugins/devgear/devgear/
-# launcher.py は src/devgear/launcher.py なので parents[2] = devgear/ が REPO_ROOT になる。
-COPILOT_PLUGIN_DIR="${HOME}/.copilot/installed-plugins/devgear/devgear"
-if [[ -d "${COPILOT_PLUGIN_DIR}" ]]; then
-  copilot_venv="${COPILOT_PLUGIN_DIR}/.venv"
-  if [[ "${copilot_venv}" == "${VENV_DIR}" ]]; then
-    echo "[devgear] Copilot cache .venv is the install target itself, skipping symlink"
-  elif [[ -L "${copilot_venv}" && "$(readlink "${copilot_venv}")" == "${VENV_DIR}" ]]; then
-    echo "[devgear] Copilot cache .venv already linked: ${copilot_venv}"
-  else
-    echo "[devgear] Symlinking .venv into Copilot cache: ${copilot_venv} -> ${VENV_DIR}"
-    rm -rf "${copilot_venv}"
-    ln -s "${VENV_DIR}" "${copilot_venv}"
-  fi
-fi
+update_claude_cache_symlinks
+update_copilot_cache_symlink
 
 if ! command -v psql >/dev/null 2>&1; then
   echo "[devgear] Note: PostgreSQL client (psql) is required for mem sync features." >&2

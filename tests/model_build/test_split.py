@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from model_build.split import CHUNK_SIZE, sha256_file, split
 
 
@@ -138,15 +137,15 @@ class TestSplit:
         """再実行時に古い part ファイルが削除される。"""
         tok, cfg = fake_aux
         out_dir = tmp_path / "out"
-        kwargs = dict(
-            model_onnx=fake_model_onnx,
-            tokenizer_json=tok,
-            config_json=cfg,
-            output_dir=out_dir,
-            model_name="test/model",
-            hf_revision="e" * 40,
-            quant="fp32",
-        )
+        kwargs = {
+            "model_onnx": fake_model_onnx,
+            "tokenizer_json": tok,
+            "config_json": cfg,
+            "output_dir": out_dir,
+            "model_name": "test/model",
+            "hf_revision": "e" * 40,
+            "quant": "fp32",
+        }
         split(**kwargs)
         first_parts = sorted(p.name for p in out_dir.glob("model.onnx.part*"))
 
@@ -159,6 +158,23 @@ class TestSplit:
 
         assert len(second_parts) == 1
         assert first_parts != second_parts or len(first_parts) == 1
+
+    def test_zero_byte_model_raises(self, tmp_path: Path, fake_aux: tuple[Path, Path]) -> None:
+        """0 バイトの model.onnx は ValueError を送出する。"""
+        tok, cfg = fake_aux
+        zero_onnx = tmp_path / "model.onnx"
+        zero_onnx.write_bytes(b"")
+        out_dir = tmp_path / "out"
+        with pytest.raises(ValueError, match="0 バイト"):
+            split(
+                model_onnx=zero_onnx,
+                tokenizer_json=tok,
+                config_json=cfg,
+                output_dir=out_dir,
+                model_name="test/model",
+                hf_revision="a" * 40,
+                quant="fp32",
+            )
 
     def test_manifest_fields(
         self, tmp_path: Path, fake_model_onnx: Path, fake_aux: tuple[Path, Path]

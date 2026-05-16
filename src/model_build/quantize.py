@@ -14,10 +14,11 @@ QUANT_CHOICES = ("fp32", "fp16", "int8")
 DEFAULT_QUANT = "fp16"
 
 
-def quantize(src: Path, dst: Path, quant: str) -> Path:
+def quantize(src: Path, dst: Path, quant: str, *, num_heads: int = 16, hidden_size: int = 1024) -> Path:
     """src の ONNX ファイルを指定量子化で dst に書き出し、出力パスを返す。
 
     quant: "fp32" | "fp16" | "int8"
+    num_heads / hidden_size: FP16 変換時のモデル構造パラメータ（build_config.json から渡す）
     """
     if quant not in QUANT_CHOICES:
         raise ValueError(f"quant は {QUANT_CHOICES} のいずれかを指定してください。")
@@ -30,16 +31,17 @@ def quantize(src: Path, dst: Path, quant: str) -> Path:
         return dst
 
     if quant == "fp16":
-        return _to_fp16(src, dst)
+        return _to_fp16(src, dst, num_heads=num_heads, hidden_size=hidden_size)
 
     return _to_int8(src, dst)
 
 
-def _to_fp16(src: Path, dst: Path) -> Path:
+def _to_fp16(src: Path, dst: Path, *, num_heads: int, hidden_size: int) -> Path:
     """FP32 ONNX → FP16 ONNX に変換する（CPU 対応）。
 
     onnxruntime.transformers.optimizer を使用する。
     optimum の dtype="fp16" export は CUDA 必須だが、こちらは CPU でも動作する。
+    num_heads / hidden_size は build_config.json 由来の値を使う。
     """
     from onnxruntime.transformers import optimizer  # type: ignore[import-untyped]
 
@@ -47,8 +49,8 @@ def _to_fp16(src: Path, dst: Path) -> Path:
     opt_model = optimizer.optimize_model(
         str(src),
         model_type="bert",
-        num_heads=16,
-        hidden_size=1024,
+        num_heads=num_heads,
+        hidden_size=hidden_size,
         opt_level=0,  # グラフ最適化なし（変換のみ）
     )
     opt_model.convert_float_to_float16(keep_io_types=True)

@@ -28,6 +28,8 @@ def _strip_password_to_pgpass(url: str) -> str:
 
     settings.json に平文パスワードが残らないようにするためのフェイルセーフ。
     パスワードが含まれない URL はそのまま返す。
+    pgpass への書き込みは os.open で O_NOFOLLOW + 0o600 を指定し、シンボリックリンク経由の
+    ファイル差し替え攻撃と権限昇格を防ぐ（CWE-367/276 対策）。
     """
     parsed = urlparse(url)
     if not parsed.password:
@@ -39,12 +41,29 @@ def _strip_password_to_pgpass(url: str) -> str:
     password = unquote(parsed.password)
     pgpass_path = Path(os.environ.get("HOME", "~")).expanduser() / ".pgpass"
     entry = f"{host}:{port}:{db}:{user}:{password}\n"
-    existing_text = pgpass_path.read_text(encoding="utf-8") if pgpass_path.exists() else ""
     prefix = f"{host}:{port}:{db}:{user}:"
-    if not any(line.startswith(prefix) for line in existing_text.splitlines()):
-        with pgpass_path.open("a", encoding="utf-8") as f:
+
+    # pgpass の権限を 0o600 に修正（既存ファイルが緩い場合）
+    if pgpass_path.exists():
+        if pgpass_path.stat().st_mode & 0o777 != 0o600:
+            import logging
+            logging.getLogger("SETTINGS").warning(".pgpass のパーミッションを 0o600 に修正します: %s", pgpass_path)
+            pgpass_path.chmod(0o600)
+        existing_text = pgpass_path.read_text(encoding="utf-8")
+        if any(line.startswith(prefix) for line in existing_text.splitlines()):
+            # エントリ既存: 追記不要
+            pass
+        else:
+            # O_NOFOLLOW でシンボリックリンク経由の差し替えを防ぎ追記する
+            fd = os.open(str(pgpass_path), os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
+                f.write(entry)
+    else:
+        # 新規作成: O_CREAT + O_NOFOLLOW で 0o600 の pgpass を生成
+        fd = os.open(str(pgpass_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(entry)
-    pgpass_path.chmod(0o600)
+
     # パスワードを除いた netloc に再構築
     userinfo = quote(parsed.username, safe="") if parsed.username else ""
     host_part = host

@@ -434,3 +434,39 @@ class TestStripPasswordToPgpass:
         monkeypatch.delenv("HOME", raising=False)
         # HOME がなくても urlparse の処理自体はパスワードのない URL を返す
         assert _strip_password_to_pgpass("postgres://u@h/db") == "postgres://u@h/db"
+
+    def test_symlink_pgpass_raises(self, tmp_path: Path) -> None:
+        """~/.pgpass がシンボリックリンクの場合は OSError（O_NOFOLLOW）。"""
+        real_file = tmp_path / "real_pgpass"
+        real_file.write_text("", encoding="utf-8")
+        pgpass = tmp_path / ".pgpass"
+        pgpass.symlink_to(real_file)
+
+        url = "postgres://alice:secret@db.example:5432/mydb"
+        with pytest.raises(OSError):
+            _strip_password_to_pgpass(url)
+
+    def test_wrong_permissions_fixed(self, tmp_path: Path) -> None:
+        """~/.pgpass のパーミッションが 0600 でない場合は 0600 に修正される。"""
+        pgpass = tmp_path / ".pgpass"
+        pgpass.write_text("", encoding="utf-8")
+        pgpass.chmod(0o644)
+
+        url = "postgres://alice:secret@db.example:5432/mydb"
+        _strip_password_to_pgpass(url)
+
+        mode = pgpass.stat().st_mode & 0o777
+        assert mode == 0o600
+
+    def test_correct_permissions_not_changed(self, tmp_path: Path) -> None:
+        """~/.pgpass のパーミッションが既に 0600 の場合はそのまま追記する。"""
+        pgpass = tmp_path / ".pgpass"
+        pgpass.write_text("", encoding="utf-8")
+        pgpass.chmod(0o600)
+
+        url = "postgres://alice:secret@db.example:5432/mydb"
+        _strip_password_to_pgpass(url)
+
+        mode = pgpass.stat().st_mode & 0o777
+        assert mode == 0o600
+        assert "secret" in pgpass.read_text()

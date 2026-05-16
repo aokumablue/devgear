@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from model_build import __version__
@@ -37,6 +37,9 @@ def split(
 
     既存の part ファイルは削除してから再生成する。
     """
+    if model_onnx.stat().st_size == 0:
+        raise ValueError(f"model.onnx が 0 バイトです: {model_onnx}")
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 既存 part ファイルを削除
@@ -85,7 +88,7 @@ def split(
         "merged_sha256": merged_sha256,
         "parts": parts,
         "auxiliary_files": auxiliary,
-        "created_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "tool_version": f"model_build/{__version__}",
     }
 

@@ -47,8 +47,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     --revision)
       REVISION="$2"
-      if [[ ! "${REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
-        echo "Error: --revision は 40 文字の16進数 SHA を指定してください: '${REVISION}'" >&2
+      if [[ ! "${REVISION}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]; then
+        echo "Error: --revision は 40 または 64 文字の16進数 SHA を指定してください: '${REVISION}'" >&2
         exit 1
       fi
       shift 2

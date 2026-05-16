@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from model_build.__main__ import _cmd_clean, _cmd_verify
 
 
@@ -44,6 +43,15 @@ class TestCmdClean:
 
         captured = capsys.readouterr()
         assert "2" in captured.out
+
+    def test_clean_nonexistent_dir_reports_and_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """存在しないディレクトリでも例外にならず、メッセージを出力する。"""
+        nonexistent = tmp_path / "no_such_dir"
+        _cmd_clean(self._make_args(nonexistent))
+        captured = capsys.readouterr()
+        assert "存在しません" in captured.out
 
 
 class TestCmdVerify:

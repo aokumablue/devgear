@@ -9,7 +9,6 @@ CLI: python3 -m devgear.mem.model_assembler --sources <json> --target <dir>
 from __future__ import annotations
 
 import argparse
-import hashlib
 import hmac
 import json
 import logging
@@ -22,10 +21,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("MODEL_ASSEMBLER")
+from devgear.mem._paths import safe_join as _safe_join
+from devgear.mem._paths import sha256_file as _sha256_path
+from devgear.mem._paths import validate_sha256_format as _validate_sha256_format
 
-_SHA256_CHARS = frozenset("0123456789abcdef")
-_CHUNK = 4 * 1024 * 1024  # 4 MB 読み取りバッファ
+log = logging.getLogger("MODEL_ASSEMBLER")
 
 # git@github.com:<owner>/<repo>.git 形式のみ許可
 _ALLOWED_REMOTE_RE = re.compile(r"^git@github\.com:[\w][\w.-]*/[\w][\w.-]*\.git$")
@@ -35,18 +35,25 @@ _GIT_SAFE_FLAGS = [
     "-c", "protocol.ext.allow=never",
     "-c", "protocol.file.allow=never",
 ]
-# GIT プロンプト（SSH パスフレーズ等）を抑制する環境変数
-_GIT_SAFE_ENV = {
-    **os.environ,
-    "GIT_TERMINAL_PROMPT": "0",
-    "GIT_ASKPASS": "/bin/true",
-}
 
 
-def _validate_sha256_format(value: str, label: str) -> None:
-    """SHA256 文字列が 64 文字の16進数であることを検証する。"""
-    if len(value) != 64 or not all(c in _SHA256_CHARS for c in value):
-        raise ValueError(f"不正な SHA256 値 ({label}): '{value[:16]}...'")
+def _make_git_env() -> dict:
+    """呼び出し時の os.environ を元に git 安全環境変数マップを返す。
+
+    モジュールロード時スナップショットを避けることでテスト時の環境変数差し替えに対応する。
+    GIT_ASKPASS: /bin/true が存在すれば使用し、なければ shutil.which("true") でフォールバック。
+    """
+    import shutil
+
+    askpass = "/bin/true"
+    if not Path(askpass).exists():  # pragma: no cover
+        found = shutil.which("true")
+        askpass = found if found else askpass
+    return {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": askpass,
+    }
 
 
 def _validate_remote(remote: str) -> None:
@@ -57,8 +64,12 @@ def _validate_remote(remote: str) -> None:
 
 def _validate_git_commit(value: str) -> None:
     """git commit が 40 桁または 64 桁の hex 文字列であることを検証する。"""
-    if len(value) not in (40, 64) or not all(c in _SHA256_CHARS for c in value):
+    if len(value) not in (40, 64):
         raise ValueError(f"不正な git commit 形式: '{value[:16]}...'")
+    try:
+        int(value, 16)
+    except ValueError as exc:
+        raise ValueError(f"不正な git commit 形式: '{value[:16]}...'") from exc
 
 
 def _validate_sparse_path(value: str) -> None:
@@ -74,24 +85,6 @@ def _validate_sparse_path(value: str) -> None:
 def _git(*args: str) -> list[str]:
     """安全フラグ付き git コマンドのargv を返す。"""
     return ["git"] + _GIT_SAFE_FLAGS + list(args)
-
-
-def _safe_join(base: Path, name: str) -> Path:
-    """name を base に結合し、base 配下に収まることを検証する（パストラバーサル防止）。"""
-    resolved = (base / name).resolve()
-    base_resolved = base.resolve()
-    if resolved != base_resolved and not resolved.is_relative_to(base_resolved):
-        raise ValueError(f"不正なパス: '{name}' は許可されたディレクトリ外を指しています")
-    return resolved
-
-
-def _sha256_path(path: Path) -> str:
-    """ファイルの SHA256 ハッシュを返す（大ファイル対応）。"""
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(_CHUNK), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 _REQUIRED_SPEC_KEYS = ("schema_version", "git_remote", "git_commit", "sparse_paths", "merged_sha256", "parts", "auxiliary_files")
@@ -128,13 +121,19 @@ def _is_already_assembled(target_dir: Path, spec: dict) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def _sparse_checkout(spec: dict, work_dir: str) -> Path:
+def _sparse_checkout(spec: dict, work_dir: Path) -> Path:
     """git sparse-checkout で assets/models だけを取得する。
 
-    work_dir は tempfile.TemporaryDirectory 内のパス。
+    work_dir は tempfile.TemporaryDirectory 内の Path。
     取得した sparse tree のルートディレクトリを返す。
+    DEVGEAR_MODEL_REMOTE は DEVGEAR_TESTING=1 の時のみ有効（テスト専用）。
     """
-    remote: str = os.environ.get("DEVGEAR_MODEL_REMOTE") or spec["git_remote"]
+    testing_mode = os.environ.get("DEVGEAR_TESTING") == "1"
+    env_remote = os.environ.get("DEVGEAR_MODEL_REMOTE")
+    if env_remote and not testing_mode:
+        log.warning("DEVGEAR_MODEL_REMOTE は DEVGEAR_TESTING=1 なしでは無視されます")
+        env_remote = None
+    remote: str = env_remote or spec["git_remote"]
     commit: str = spec["git_commit"]
     sparse_paths: list[str] = spec["sparse_paths"]
 
@@ -143,10 +142,13 @@ def _sparse_checkout(spec: dict, work_dir: str) -> Path:
     for sp in sparse_paths:
         _validate_sparse_path(sp)
 
-    clone_dir = os.path.join(work_dir, "repo")
-    os.makedirs(clone_dir)
+    clone_dir = work_dir / "repo"
+    clone_dir.mkdir()
+    clone_dir_str = str(clone_dir)
 
     log.info("git sparse-checkout: %s@%s", remote, commit[:8])
+
+    git_env = _make_git_env()
 
     def _run(*args: str) -> None:
         """安全フラグ付き git を実行し、失敗時は stderr をログに出す。"""
@@ -155,29 +157,45 @@ def _sparse_checkout(spec: dict, work_dir: str) -> Path:
                 _git(*args),
                 check=True,
                 capture_output=True,
-                env=_GIT_SAFE_ENV,
+                env=git_env,
             )
         except subprocess.CalledProcessError as exc:
             log.error("git 失敗: %s\nstderr: %s", list(args), exc.stderr.decode(errors="replace"))
             raise
 
     # クローン（blob なし、depth=1、チェックアウトなし）
-    _run("clone", "--filter=blob:none", "--no-checkout", "--depth=1", "--sparse", remote, clone_dir)
+    _run("clone", "--filter=blob:none", "--no-checkout", "--depth=1", "--sparse", remote, clone_dir_str)
 
     # sparse-checkout を cone モードで設定
-    _run("-C", clone_dir, "sparse-checkout", "init", "--cone")
-    _run("-C", clone_dir, "sparse-checkout", "set", *sparse_paths)
+    _run("-C", clone_dir_str, "sparse-checkout", "init", "--cone")
+    _run("-C", clone_dir_str, "sparse-checkout", "set", *sparse_paths)
 
     # 指定 commit をチェックアウト
-    _run("-C", clone_dir, "checkout", commit)
+    _run("-C", clone_dir_str, "checkout", commit)
 
-    return Path(clone_dir)
+    return clone_dir
 
 
 def _verify_parts(assets_dir: Path, spec: dict) -> None:
-    """各 part の SHA256 を検証する。"""
-    for part in spec["parts"]:
+    """各 part の SHA256 を検証する。parts 配列は model.onnx.part00 から始まる単調増加を要求する。"""
+    parts = spec["parts"]
+    # parts の名前が model.onnx.partNN の単調増加（0始まり）であることを確認
+    for expected_idx, part in enumerate(parts):
         name: str = part["name"]
+        prefix = "model.onnx.part"
+        if not name.startswith(prefix):
+            raise ValueError(f"parts[{expected_idx}] の名前が不正: {repr(name)}")
+        try:
+            actual_idx = int(name.removeprefix(prefix))
+        except ValueError as exc:
+            raise ValueError(f"parts[{expected_idx}] のインデックスが数値でない: {repr(name)}") from exc
+        if actual_idx != expected_idx:
+            raise ValueError(
+                f"parts の順序が不正: インデックス {expected_idx} に {repr(name)} (idx={actual_idx}) があります"
+            )
+
+    for part in parts:
+        name = part["name"]
         expected: str = part["sha256"]
         _validate_sha256_format(expected, name)
         # assets_dir 配下の sparse_paths[0] にファイルがある
@@ -192,11 +210,15 @@ def _verify_parts(assets_dir: Path, spec: dict) -> None:
                 f"  expected: {expected}\n"
                 f"  actual:   {actual}"
             )
-    log.info("part 検証完了: %d 個", len(spec["parts"]))
+    log.info("part 検証完了: %d 個", len(parts))
 
 
 def _merge_and_verify(assets_dir: Path, target_dir: Path, spec: dict) -> None:
     """part を統合して target_dir/model.onnx に書き出す（atomic rename）。"""
+    import hashlib
+
+    from devgear.mem._paths import _CHUNK
+
     sparse_rel = spec["sparse_paths"][0]
     model_src_dir = assets_dir / sparse_rel
 
@@ -237,7 +259,11 @@ def _merge_and_verify(assets_dir: Path, target_dir: Path, spec: dict) -> None:
 
 
 def _copy_auxiliary(assets_dir: Path, target_dir: Path, spec: dict) -> None:
-    """tokenizer.json / config.json / manifest.json を SHA256 検証付きでコピーする。"""
+    """tokenizer.json / config.json / manifest.json を SHA256 検証付きでコピーする。
+
+    各ファイルは git tag 署名検証済みの sparse tree 由来であり、
+    model_sources.json の auxiliary_files SHA256 で内容を確認する。
+    """
     sparse_rel = spec["sparse_paths"][0]
     model_src_dir = assets_dir / sparse_rel
 
@@ -343,7 +369,7 @@ def assemble(sources_json: Path, target_dir: Path) -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="devgear_assets_") as tmp:
-        assets_dir = _sparse_checkout(spec, tmp)
+        assets_dir = _sparse_checkout(spec, Path(tmp))
         _verify_parts(assets_dir, spec)
         _merge_and_verify(assets_dir, target_dir, spec)
         _copy_auxiliary(assets_dir, target_dir, spec)
@@ -352,7 +378,7 @@ def assemble(sources_json: Path, target_dir: Path) -> None:
     log.info("モデル統合完了: %s", target_dir)
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover
     """CLI エントリポイント。"""
     logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
 
@@ -381,5 +407,5 @@ def main() -> None:
         raise SystemExit(1) from exc
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

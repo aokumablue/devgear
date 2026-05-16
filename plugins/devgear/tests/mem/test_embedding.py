@@ -268,3 +268,119 @@ class TestTokenTypeIdsBranch:
         result = embedding.embed(["x"])
         assert "token_type_ids" in captured
         assert len(result) == 1
+
+
+class TestEncodeArray:
+    """_encode_array() の内部 API テスト。"""
+
+    def test_returns_numpy_array(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        """_encode_array は numpy 配列を返す（.tolist() 前の内部表現）。"""
+        import numpy as np
+        _patch_backends(monkeypatch, hidden_dim=4)
+        result = embedding._encode_array(["hello"])
+        assert isinstance(result, np.ndarray)
+
+    def test_encode_array_shape(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        """返される配列の shape は (batch, hidden_dim)。"""
+        _patch_backends(monkeypatch, hidden_dim=4)
+        result = embedding._encode_array(["a", "b"])
+        assert result.shape == (2, 4)
+
+    def test_encode_is_tolist_of_encode_array(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        """_encode の結果は _encode_array().tolist() と一致する。"""
+        _patch_backends(monkeypatch, hidden_dim=4)
+        arr = embedding._encode_array(["test"])
+        lst = embedding._encode(["test"])
+        assert lst == arr.tolist()
+
+
+class TestVerifyTokenizer:
+    """_verify_tokenizer のエッジケーステスト。"""
+
+    def test_raises_when_no_tokenizer_entry_in_manifest(self, tmp_path: Path):
+        """manifest に tokenizer.json エントリがない場合は ValueError。"""
+        import json
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir(exist_ok=True)
+        manifest = {
+            "merged_sha256": "a" * 64,
+            "auxiliary_files": [{"name": "config.json", "sha256": "b" * 64}],
+        }
+        (model_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        tok = model_dir / "tokenizer.json"
+        tok.write_bytes(b"{}")
+
+        with pytest.raises(ValueError, match="tokenizer.json のエントリがありません"):
+            embedding._verify_tokenizer(tok, model_dir)
+
+    def test_skips_non_tokenizer_auxiliary_entries(self, tmp_path: Path):
+        """manifest に config.json エントリがあっても tokenizer.json を正しく検証する。"""
+        import hashlib
+        import json
+
+        tok_data = b"{}"
+        tok_sha = hashlib.sha256(tok_data).hexdigest()
+        model_dir = tmp_path / "models"
+        model_dir.mkdir(exist_ok=True)
+        manifest = {
+            "merged_sha256": "a" * 64,
+            "auxiliary_files": [
+                {"name": "config.json", "sha256": "b" * 64},
+                {"name": "tokenizer.json", "sha256": tok_sha},
+            ],
+        }
+        (model_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        tok = model_dir / "tokenizer.json"
+        tok.write_bytes(tok_data)
+
+        # 例外が発生しなければ OK（config.json をスキップして tokenizer.json を検証）
+        embedding._verify_tokenizer(tok, model_dir)
+
+
+class TestTwoPhaseInitRollback:
+    """2-phase 初期化ロールバック（H-4）のテスト。"""
+
+    def test_session_reset_when_tokenizer_fails(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        """トークナイザ構築が失敗した場合 _session と _tokenizer が None にリセットされる。"""
+        import numpy as np
+
+        class FakeSessionOptions:
+            log_severity_level = 3
+            enable_mem_pattern = False
+            intra_op_num_threads = 1
+
+        class FakeInput:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        class FakeSession:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            def get_inputs(self):
+                return [FakeInput("input_ids"), FakeInput("attention_mask")]
+
+            def run(self, output_names, inputs):
+                batch = inputs["input_ids"].shape[0]
+                seq_len = inputs["input_ids"].shape[1]
+                return [np.ones((batch, seq_len, 4), dtype=np.float32)]
+
+        class BrokenTokenizer:
+            @staticmethod
+            def from_file(path: str) -> None:
+                raise RuntimeError("tokenizer broken")
+
+        fake_ort = types.SimpleNamespace(
+            InferenceSession=FakeSession,
+            SessionOptions=FakeSessionOptions,
+        )
+        monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", types.SimpleNamespace(Tokenizer=BrokenTokenizer))
+
+        with pytest.raises(RuntimeError, match="tokenizer broken"):
+            embedding.embed(["test"])
+
+        # 失敗後はシングルトンがリセットされている
+        assert embedding._session is None
+        assert embedding._tokenizer is None

@@ -2,39 +2,26 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import io
 import json
 import math
 from pathlib import Path
 
-_SHA256_CHARS = frozenset("0123456789abcdef")
+from model_build._paths import safe_join as _safe_join
+from model_build._paths import sha256_file as _sha256_file
+from model_build._paths import validate_sha256_format as _validate_sha256_format
 
 
 def _sha256_bytes(data: bytes) -> str:
     """バイト列の SHA256 ダイジェストを返す。"""
+    import hashlib
     return hashlib.sha256(data).hexdigest()
-
-
-def _validate_sha256_format(value: str, label: str) -> None:
-    """SHA256 文字列が 64 文字の16進数であることを検証する（M-1）。"""
-    if len(value) != 64 or not all(c in _SHA256_CHARS for c in value):
-        raise ValueError(f"不正な SHA256 値 ({label}): '{value[:16]}...'")
-
-
-def _safe_join(base: Path, name: str) -> Path:
-    """name を base に結合し、base 配下に収まることを検証する（H-1 パストラバーサル対策）。"""
-    resolved = (base / name).resolve()
-    base_resolved = base.resolve()
-    if not str(resolved).startswith(str(base_resolved) + "/") and resolved != base_resolved:
-        raise ValueError(f"不正なパス: '{name}' は許可されたディレクトリ外を指しています")
-    return resolved
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     """2 ベクトルのコサイン類似度を返す。"""
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a == 0 or norm_b == 0:
@@ -102,11 +89,11 @@ def verify(model_dir: Path, cosine_threshold: float = 0.999) -> None:
         )
     print("[verify] 統合後 SHA256 検証 OK", flush=True)
 
-    # 3. 補助ファイルの SHA256 検証
+    # 3. 補助ファイルの SHA256 検証（ストリーミングで大ファイルに対応）
     for aux in manifest["auxiliary_files"]:
         _validate_sha256_format(aux["sha256"], aux["name"])
         aux_path = _safe_join(model_dir, aux["name"])
-        actual_aux = _sha256_bytes(aux_path.read_bytes())
+        actual_aux = _sha256_file(aux_path)
         if not hmac.compare_digest(actual_aux, aux["sha256"]):
             raise ValueError(
                 f"補助ファイル SHA256 不一致: {aux['name']}\n"
@@ -117,6 +104,41 @@ def verify(model_dir: Path, cosine_threshold: float = 0.999) -> None:
 
     # 4. 推論テスト（onnxruntime + tokenizers）
     _run_inference_check(merged_bytes, model_dir, manifest, cosine_threshold)
+
+
+def _check_dim(vectors: list[list[float]], dim: int) -> None:
+    """推論結果の次元数が manifest と一致することを確認する。"""
+    if len(vectors[0]) != dim:
+        raise ValueError(f"次元数不一致: expected {dim}, got {len(vectors[0])}")
+    print(f"[verify] 推論 OK: dim={dim}", flush=True)
+
+
+def _check_l2_norm(vectors: list[list[float]]) -> None:
+    """各ベクトルが L2 正規化済み（norm ≈ 1.0）であることを確認する。"""
+    for i, vec in enumerate(vectors):
+        norm_val = math.sqrt(sum(x * x for x in vec))
+        if abs(norm_val - 1.0) >= 1e-3:
+            raise ValueError(f"L2 ノルム不正 (vec {i}): {norm_val}")
+    print("[verify] L2 ノルム検証 OK", flush=True)
+
+
+def _check_reproducibility(
+    session: object,
+    tokenizer: object,
+    text: str,
+    ref_vec: list[float],
+    threshold: float,
+) -> None:
+    """同一入力で 2 回推論し、cosine 類似度が閾値以上であることを確認する。
+
+    threshold 0.999 は CPU FP16 丸め誤差の上限として設定している。
+    FP32 では完全一致（≈1.0）が期待できるが、INT8/FP16 ではわずかな誤差を許容する。
+    """
+    vec2 = _infer_embedding(session, tokenizer, text)
+    sim = _cosine_similarity(ref_vec, vec2)
+    if sim < threshold:
+        raise ValueError(f"再現性チェック失敗: cosine={sim:.6f} < {threshold}")
+    print(f"[verify] 再現性チェック OK: cosine={sim:.6f}", flush=True)
 
 
 def _run_inference_check(
@@ -140,22 +162,7 @@ def _run_inference_check(
     test_texts = ["検索クエリ: 日本語のテスト文", "検索クエリ: ベクトル品質確認"]
     vectors = [_infer_embedding(session, tokenizer, t) for t in test_texts]
 
-    dim = manifest["embedding_dim"]
-    # H-3: assert → raise ValueError（python -O で無効化される assert を排除）
-    if len(vectors[0]) != dim:
-        raise ValueError(f"次元数不一致: expected {dim}, got {len(vectors[0])}")
-    print(f"[verify] 推論 OK: dim={dim}", flush=True)
-
-    for i, vec in enumerate(vectors):
-        norm_val = math.sqrt(sum(x * x for x in vec))
-        if abs(norm_val - 1.0) >= 1e-3:
-            raise ValueError(f"L2 ノルム不正 (vec {i}): {norm_val}")
-    print("[verify] L2 ノルム検証 OK", flush=True)
-
-    # 再現性チェック（同じ入力で 2 回推論して一致確認）
-    vec2 = _infer_embedding(session, tokenizer, test_texts[0])
-    sim = _cosine_similarity(vectors[0], vec2)
-    if sim < cosine_threshold:
-        raise ValueError(f"再現性チェック失敗: cosine={sim:.6f} < {cosine_threshold}")
-    print(f"[verify] 再現性チェック OK: cosine={sim:.6f}", flush=True)
+    _check_dim(vectors, manifest["embedding_dim"])
+    _check_l2_norm(vectors)
+    _check_reproducibility(session, tokenizer, test_texts[0], vectors[0], cosine_threshold)
     print("[verify] すべての検証 PASS", flush=True)

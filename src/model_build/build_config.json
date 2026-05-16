@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "model_name": "cl-nagoya/ruri-v3-310m",
+  "hf_revision": "18b60fb8c2b9df296fb4212bb7d23ef94e579cd3",
+  "model_type": "bert",
+  "num_heads": 16,
+  "hidden_size": 1024,
+  "embedding_dim": 768,
+  "tokenizer_max_length": 512,
+  "opset": 17
+}
