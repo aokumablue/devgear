@@ -22,21 +22,22 @@ def export_to_onnx(
     optimum.exporters.onnx.main_export を直接呼び出す。
     出力は output_dir/onnx_export/ に生成される。
     """
-    from optimum.exporters.onnx import main_export  # type: ignore[import-untyped]
-
-    onnx_out = output_dir / "onnx_export"
-    onnx_out.mkdir(parents=True, exist_ok=True)
-
-    print(
-        f"[export] main_export(model={model_name}, revision={revision[:8]}, opset={opset})",
-        flush=True,
-    )
-    # PyTorch の既知バグ: 同一シンボルの二重登録警告（upstream issue）
+    # PyTorch の既知バグ: @_onnx_symbolic デコレータ実行（import 時）に二重登録警告が出る
     # transformers の定数トレース警告は公式ドキュメントで「安全に無視可」と明記されている
+    # import より前にフィルタを設定しないと catch_warnings が間に合わない
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*already registered.*", category=UserWarning)
         warnings.filterwarnings("ignore", category=UserWarning, module="torch.onnx")
         warnings.filterwarnings("ignore", message=".*torch.tensor results are registered as constants.*")
+        from optimum.exporters.onnx import main_export  # type: ignore[import-untyped]  # noqa: PLC0415
+
+        onnx_out = output_dir / "onnx_export"
+        onnx_out.mkdir(parents=True, exist_ok=True)
+
+        print(
+            f"[export] main_export(model={model_name}, revision={revision[:8]}, opset={opset})",
+            flush=True,
+        )
         main_export(
             model_name_or_path=model_name,
             output=onnx_out,
