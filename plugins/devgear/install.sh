@@ -357,7 +357,7 @@ update_claude_cache_symlinks
 update_copilot_cache_symlink
 
 if ! command -v psql >/dev/null 2>&1; then
-  echo "[devgear] Note: PostgreSQL client (psql) is required for mem sync features." >&2
+  echo "[devgear] Note: PostgreSQL client (psql) is required for mem sync features."
 fi
 
 # ~/.devgear/mem.db スキーマを初期化する（べき等: 既存DBは変更しない）

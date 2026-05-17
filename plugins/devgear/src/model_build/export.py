@@ -7,6 +7,7 @@ optimum.exporters.onnx.main_export を直接呼び出す（CLI には `--revisio
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 
@@ -30,16 +31,22 @@ def export_to_onnx(
         f"[export] main_export(model={model_name}, revision={revision[:8]}, opset={opset})",
         flush=True,
     )
-    main_export(
-        model_name_or_path=model_name,
-        output=onnx_out,
-        task="feature-extraction",
-        opset=opset,
-        revision=revision,
-        trust_remote_code=False,
-        framework="pt",
-        do_validation=False,
-    )
+    # PyTorch の既知バグ: 同一シンボルの二重登録警告（upstream issue）
+    # transformers の定数トレース警告は公式ドキュメントで「安全に無視可」と明記されている
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*already registered.*", category=UserWarning)
+        warnings.filterwarnings("ignore", category=UserWarning, module="torch.onnx")
+        warnings.filterwarnings("ignore", message=".*torch.tensor results are registered as constants.*")
+        main_export(
+            model_name_or_path=model_name,
+            output=onnx_out,
+            task="feature-extraction",
+            opset=opset,
+            revision=revision,
+            trust_remote_code=False,
+            framework="pt",
+            do_validation=False,
+        )
 
     # 生成された ONNX ファイルを検索（model.onnx 優先）
     candidates = list(onnx_out.glob("model.onnx")) + list(onnx_out.glob("*.onnx"))
