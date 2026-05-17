@@ -23,6 +23,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 _DEVGEAR_DIR = Path.home() / ".devgear"
 _VERSION_FILE = _DEVGEAR_DIR / "plugin_installed_version"
 _LOCK_FILE = _DEVGEAR_DIR / "install.lock"
+_VENV_DIR = Path.home() / ".devgear" / ".venv"
 
 
 def _session_start_output() -> str:
@@ -33,6 +34,56 @@ def _session_start_output() -> str:
 def _sanitize_exception(exc: BaseException) -> str:
     """例外メッセージをログ出力向けにサニタイズする。"""
     return sanitize_log_value(str(exc))
+
+
+def _should_repair_venv_symlink(plugin_root: Path) -> bool:
+    """version 一致時に .venv symlink が欠落・破損していれば True を返す。
+
+    Args:
+        plugin_root: プラグインルートディレクトリのパス。
+
+    Returns:
+        修復が必要であれば True。
+    """
+    if not _VENV_DIR.is_dir():
+        return False  # 共有 venv 自体が無ければ修復不可
+    link = plugin_root / ".venv"
+    if not link.exists() and not link.is_symlink():
+        return True  # symlink が存在しない
+    if link.is_symlink():
+        try:
+            return link.resolve() != _VENV_DIR.resolve()
+        except OSError:
+            return True  # 解決不能な破損 symlink
+    return True  # 実体ディレクトリやファイルなど予期しない種別
+
+
+def _repair_venv_symlink(plugin_root: Path) -> None:
+    """.venv symlink を共有 venv へ向け直す。
+
+    実体ディレクトリが存在する場合は誤削除を避け警告のみ出す。
+
+    Args:
+        plugin_root: プラグインルートディレクトリのパス。
+
+    Returns:
+        None: 値を返しません。
+    """
+    link = plugin_root / ".venv"
+    if link.exists() and not link.is_symlink():
+        # 実体ディレクトリ / ファイルは破壊しない
+        print(f"[SessionInstall] .venv が symlink ではないため自動修復を中止: {link}", file=sys.stderr)
+        return
+    try:
+        link.unlink(missing_ok=True)
+    except OSError as e:
+        print(f"[SessionInstall] 破損 symlink 削除失敗: {_sanitize_exception(e)}", file=sys.stderr)
+        return
+    try:
+        link.symlink_to(_VENV_DIR, target_is_directory=True)
+        print(f"[SessionInstall] .venv symlink 修復: {link} -> {_VENV_DIR}", file=sys.stderr)
+    except OSError as e:
+        print(f"[SessionInstall] symlink 作成失敗: {_sanitize_exception(e)}", file=sys.stderr)
 
 
 def _resolve_plugin_root() -> Path | None:
@@ -129,6 +180,9 @@ def _precheck_install_target() -> tuple[Path, str] | None:
 
     installed_version = _get_installed_version()
     if installed_version == current_version:
+        # 軽量修復: version 一致でも .venv symlink が欠落していれば再作成のみ実行する
+        if _should_repair_venv_symlink(plugin_root):
+            _repair_venv_symlink(plugin_root)
         print(f"[SessionInstall] 既にインストール済みです: {sanitize_log_value(current_version)}", file=sys.stderr)
         return None
 
