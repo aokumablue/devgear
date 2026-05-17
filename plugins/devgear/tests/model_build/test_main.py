@@ -54,7 +54,7 @@ class TestCmdClean:
         nonexistent = tmp_path / "no_such_dir"
         _cmd_clean(self._make_args(nonexistent))
         captured = capsys.readouterr()
-        assert "存在しません" in captured.out
+        assert "not found" in captured.out
 
     def test_clean_skips_symlinks(self, tmp_path: Path) -> None:
         """symlink は削除対象外。"""

@@ -63,7 +63,7 @@ def verify(model_dir: Path, cosine_threshold: float = 0.999) -> None:
             f"  expected: {manifest['merged_sha256']}\n"
             f"  actual:   {actual}"
         )
-    print("[verify] model.onnx SHA256 検証 OK", flush=True)
+    print("[verify] model.onnx SHA256 verification OK", flush=True)
 
     # 2. 補助ファイルの SHA256 検証
     for aux in manifest["auxiliary_files"]:
@@ -76,7 +76,7 @@ def verify(model_dir: Path, cosine_threshold: float = 0.999) -> None:
                 f"  expected: {aux['sha256']}\n"
                 f"  actual:   {actual_aux}"
             )
-    print("[verify] 補助ファイル SHA256 検証 OK", flush=True)
+    print("[verify] auxiliary file SHA256 verification OK", flush=True)
 
     # 3. 推論テスト（onnxruntime + tokenizers）
     model_bytes = model_path.read_bytes()
@@ -87,7 +87,7 @@ def _check_dim(vectors: list[list[float]], dim: int) -> None:
     """推論結果の次元数が manifest と一致することを確認する。"""
     if len(vectors[0]) != dim:
         raise ValueError(f"次元数不一致: expected {dim}, got {len(vectors[0])}")
-    print(f"[verify] 推論 OK: dim={dim}", flush=True)
+    print(f"[verify] inference OK: dim={dim}", flush=True)
 
 
 def _check_l2_norm(vectors: list[list[float]]) -> None:
@@ -96,7 +96,7 @@ def _check_l2_norm(vectors: list[list[float]]) -> None:
         norm_val = math.sqrt(sum(x * x for x in vec))
         if abs(norm_val - 1.0) >= 1e-3:
             raise ValueError(f"L2 ノルム不正 (vec {i}): {norm_val}")
-    print("[verify] L2 ノルム検証 OK", flush=True)
+    print("[verify] L2 norm verification OK", flush=True)
 
 
 def _check_reproducibility(
@@ -115,7 +115,7 @@ def _check_reproducibility(
     sim = _cosine_similarity(ref_vec, vec2)
     if sim < threshold:
         raise ValueError(f"再現性チェック失敗: cosine={sim:.6f} < {threshold}")
-    print(f"[verify] 再現性チェック OK: cosine={sim:.6f}", flush=True)
+    print(f"[verify] reproducibility check OK: cosine={sim:.6f}", flush=True)
 
 
 def _run_inference_check(
@@ -150,4 +150,4 @@ def _run_inference_check(
     _check_dim(vectors, manifest["embedding_dim"])
     _check_l2_norm(vectors)
     _check_reproducibility(session, tokenizer, test_texts[0], vectors[0], cosine_threshold)
-    print("[verify] すべての検証 PASS", flush=True)
+    print("[verify] all verifications PASSED", flush=True)

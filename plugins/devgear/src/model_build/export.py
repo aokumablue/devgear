@@ -56,5 +56,5 @@ def export_to_onnx(
 
     onnx_path = next((p for p in candidates if p.name == "model.onnx"), candidates[0])
     size_mb = onnx_path.stat().st_size / 1024**2
-    print(f"[export] ONNX モデル: {onnx_path} ({size_mb:.1f} MB)", flush=True)
+    print(f"[export] ONNX model: {onnx_path} ({size_mb:.1f} MB)", flush=True)
     return onnx_path

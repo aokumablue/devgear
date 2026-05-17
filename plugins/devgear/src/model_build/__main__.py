@@ -50,7 +50,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
 
         # Step 1: ONNX エクスポート（常に FP32 で取得し、後段で量子化）
         print(
-            f"[build] Step 1/2: ONNX エクスポート ({args.model}@{args.revision[:8]})",
+            f"[build] Step 1/2: ONNX export ({args.model}@{args.revision[:8]})",
             flush=True,
         )
         raw_onnx = export_to_onnx(
@@ -60,7 +60,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
         )
 
         # Step 2: 量子化（fp32: コピー、fp16: ort optimizer、int8: 動的量子化）
-        print(f"[build] Step 2/2: 量子化 ({quant}) → {output_dir}", flush=True)
+        print(f"[build] Step 2/2: quantization ({quant}) → {output_dir}", flush=True)
         quant_onnx = tmp_path / f"model_{quant}.onnx"
         quantize(raw_onnx, quant_onnx, quant, num_heads=build_cfg["num_heads"], hidden_size=build_cfg["hidden_size"])
 
@@ -110,7 +110,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
         manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"[build] manifest: {manifest_path}", flush=True)
 
-    print("[build] 完了", flush=True)
+    print("[build] complete", flush=True)
 
 
 def _cmd_verify(args: argparse.Namespace) -> None:
@@ -127,7 +127,7 @@ def _cmd_clean(args: argparse.Namespace) -> None:
     """
     output_dir: Path = args.out
     if not output_dir.exists():
-        print(f"[clean] ディレクトリが存在しません: {output_dir}", flush=True)
+        print(f"[clean] Directory not found: {output_dir}", flush=True)
         return
     removed = 0
     for name in ("model.onnx", "tokenizer.json", "config.json", "manifest.json"):
@@ -135,7 +135,7 @@ def _cmd_clean(args: argparse.Namespace) -> None:
         if p.exists() and not p.is_symlink():
             p.unlink()
             removed += 1
-    print(f"[clean] {removed} ファイルを削除しました: {output_dir}", flush=True)
+    print(f"[clean] Removed {removed} files: {output_dir}", flush=True)
 
 
 def main() -> None:
