@@ -89,6 +89,20 @@ def _filter_session_summary(content: str, max_length: int = 2000) -> str:
 def _get_git_info() -> dict:
     """現在ディレクトリの git 状態を取得する。失敗時は空の値を返す。"""
     info: dict = {"branch": None, "commit_hash": None, "uncommitted_count": 0}
+
+    # git 管理下かを事前判定し、管理外なら 3 回の失敗ログを抑制する
+    try:
+        inside = check_output_text(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            timeout=5,
+        ).strip()
+        if inside != "true":
+            log("[SessionStart] not inside a git work tree; skipping git lookups")
+            return info
+    except (OSError, subprocess.SubprocessError):
+        log("[SessionStart] git not available or not a repository; skipping git lookups")
+        return info
+
     try:
         info["branch"] = check_output_text(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],

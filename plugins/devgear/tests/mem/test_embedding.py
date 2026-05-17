@@ -154,6 +154,12 @@ class TestEmbed:
         embedding.embed(["b"])
         assert embedding._session is session_first
 
+    def test_str_input_raises_type_error(self, monkeypatch: pytest.MonkeyPatch):
+        """文字列を直接渡すと明確な TypeError が出る（内部ライブラリの不明瞭なエラーを防ぐ）。"""
+        _patch_backends(monkeypatch)
+        with pytest.raises(TypeError, match="expects list\\[str\\]"):
+            embedding.embed("not a list")
+
 
 class TestEmbedQuery:
     """embed_query() の動作テスト。"""

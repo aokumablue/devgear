@@ -191,6 +191,8 @@ def _encode(texts: list[str]) -> list[list[float]]:
 
 def embed(texts: list[str]) -> list[list[float]]:
     """テキストリストを埋め込みに変換する。"""
+    if isinstance(texts, str):
+        raise TypeError(f"embed() expects list[str], got str. Pass [{texts!r}] instead.")
     if not texts:
         return []
     return _encode(texts)

@@ -288,6 +288,8 @@ def test_session_start_git_info_and_scope_hint_helpers(monkeypatch: pytest.Monke
     monkeypatch.setattr(session_start, "log", logs.append)
 
     def fake_check_output(cmd: list[str], **_kwargs: object) -> str:
+        if "--is-inside-work-tree" in cmd:
+            return "true"
         if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
             raise subprocess.CalledProcessError(1, cmd, output=b"", stderr=b"no branch")
         if cmd[:3] == ["git", "rev-parse", "--short=12"]:
@@ -308,6 +310,8 @@ def test_session_start_git_info_and_scope_hint_helpers(monkeypatch: pytest.Monke
     logs.clear()
 
     def fake_check_output_status(cmd: list[str], **_kwargs: object) -> str:
+        if "--is-inside-work-tree" in cmd:
+            return "true"
         if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
             return "main\n"
         if cmd[:3] == ["git", "rev-parse", "--short=12"]:

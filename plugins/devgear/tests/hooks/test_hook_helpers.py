@@ -294,6 +294,7 @@ def test_session_start_sanitizes_git_logs(monkeypatch: pytest.MonkeyPatch, tmp_p
         session_start,
         "check_output_text",
         lambda cmd, timeout=5.0: {
+            ("git", "rev-parse", "--is-inside-work-tree"): "true",
             ("git", "rev-parse", "--abbrev-ref", "HEAD"): "feature\nbranch\x1b[31m",
             ("git", "rev-parse", "--short=12", "HEAD"): "abc123\x00def",
             ("git", "status", "--porcelain"): " M file.py\n",

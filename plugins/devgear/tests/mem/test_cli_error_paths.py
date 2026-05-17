@@ -187,7 +187,19 @@ def test_record_and_profile_and_item_run_handlers(
     monkeypatch.setattr(cli, "get_git_user_name", lambda: "origin")
 
     cli._handle_record_interaction(settings, {"session_id": "s1", "user_prompt_full": ""})
-    assert json.loads(capsys.readouterr().out)["error"] == "user_prompt_full is required"
+    result = json.loads(capsys.readouterr().out)
+    assert result["success"] is True
+    assert result["skipped"] is True
+    assert result["reason"] == "no prompt"
+
+    # Claude Code UserPromptSubmit は "prompt" キーで渡す: フォールバック確認
+    cli._handle_record_interaction(
+        settings,
+        {"session_id": "s1", "prompt": "prompt via new key"},
+    )
+    result2 = json.loads(capsys.readouterr().out)
+    assert result2["success"] is True
+    assert "skipped" not in result2
 
     cli._handle_record_interaction(
         settings,
@@ -203,8 +215,9 @@ def test_record_and_profile_and_item_run_handlers(
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["success"] is True
-    assert payload["interaction_index"] == 0
-    assert db.interactions[0].ai_response_summary == "summary"
+    # "prompt" キー経由で先に1件追加されているため index は 1
+    assert payload["interaction_index"] == 1
+    assert db.interactions[1].ai_response_summary == "summary"
 
     assert cli._handle_record_project_profile(
         settings,

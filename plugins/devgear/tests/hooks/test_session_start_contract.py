@@ -184,6 +184,33 @@ class TestSessionStartHookContract:
         assert code == 0
         _assert_session_start_json(buf_out.getvalue())
 
+    def test_get_git_info_outside_repo_no_error_logs(self, monkeypatch) -> None:
+        """git 管理外ディレクトリから呼ばれた場合、個別失敗ログを出さず空の dict を返す。"""
+        import subprocess
+
+        call_count = 0
+
+        def _fake_check_output_text(cmd: list, **kwargs) -> str:
+            nonlocal call_count
+            call_count += 1
+            if "--is-inside-work-tree" in cmd:
+                raise subprocess.CalledProcessError(128, cmd)
+            raise AssertionError("後続の git コマンドは呼ばれるべきではない")
+
+        # session_start モジュール内でバインドされた名前をパッチする
+        monkeypatch.setattr(session_start, "check_output_text", _fake_check_output_text)
+
+        messages: list[str] = []
+        monkeypatch.setattr(session_start, "log", lambda msg, *a, **kw: messages.append(str(msg)))
+
+        result = session_start._get_git_info()
+
+        assert result == {"branch": None, "commit_hash": None, "uncommitted_count": 0}
+        # --is-inside-work-tree の 1 回だけ呼ばれ、branch/commit/status は呼ばれない
+        assert call_count == 1
+        # 個別失敗ログ（"failed:" を含む）が出ていないことを確認
+        assert not any("failed:" in m for m in messages)
+
 
 class TestRunWithFlagsSessionStartContract:
     def test_fallback_output_is_valid_json(self) -> None:

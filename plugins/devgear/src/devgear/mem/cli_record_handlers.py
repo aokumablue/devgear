@@ -87,10 +87,13 @@ def handle_record_interaction(
 
     session_id = str(stdin_data.get("session_id", "") or "")
     project = get_project(stdin_data)
-    user_prompt_full = str(stdin_data.get("user_prompt_full", "") or "")
+    # Claude Code UserPromptSubmit は "prompt" キーで渡す（"user_prompt_full" は旧名）
+    user_prompt_full = str(
+        stdin_data.get("user_prompt_full") or stdin_data.get("prompt") or ""
+    )
 
     if not user_prompt_full.strip():
-        print(json.dumps({"success": False, "error": "user_prompt_full is required"}))
+        print(json.dumps({"success": True, "skipped": True, "reason": "no prompt"}))
         return
 
     try:
