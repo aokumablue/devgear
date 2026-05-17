@@ -25,7 +25,7 @@ build_onnx_impl() {
   mkdir -p "${log_dir}" "${model_target}"
 
   if [[ ! -x "${build_python}" ]]; then
-    echo "[build] ビルド用 venv を作成しています: ${build_venv}"
+    echo "[build] Creating build venv: ${build_venv}"
     python3 -m venv "${build_venv}"
   fi
 
@@ -49,13 +49,13 @@ build_onnx_impl() {
 
   if ! PYTHONPATH="${src_dir}" "${build_python}" -m model_build build "${build_args[@]}" \
       2>&1 | tee "${build_log}"; then
-    echo "[build] Error: ONNX ビルドに失敗しました。ログ: ${build_log}" >&2
+    echo "[build] Error: ONNX build failed. Log: ${build_log}" >&2
     return 1
   fi
 
   if ! PYTHONPATH="${src_dir}" "${build_python}" -m model_build verify \
       --model-dir "${model_target}" 2>&1 | tee -a "${build_log}"; then
-    echo "[build] Error: モデル検証に失敗しました。ログ: ${build_log}" >&2
+    echo "[build] Error: Model verification failed. Log: ${build_log}" >&2
     return 1
   fi
 }
@@ -67,24 +67,24 @@ build_onnx_if_missing() {
   local model_onnx="${model_target}/model.onnx"
 
   if [[ -f "${model_onnx}" ]]; then
-    echo "[build] ONNX モデルは既にビルド済みです（スキップ）: ${model_onnx}"
+    echo "[build] ONNX model already built (skipping): ${model_onnx}"
     return 0
   fi
 
   local avail_mb
   avail_mb="$(awk '/MemAvailable/ { print int($2/1024) }' /proc/meminfo 2>/dev/null || echo 0)"
   if [[ "${avail_mb}" -lt 3072 ]]; then
-    echo "[build] Warning: 利用可能 RAM が ${avail_mb} MB です。4096 MB 以上を推奨します。" >&2
+    echo "[build] Warning: Available RAM is ${avail_mb} MB. 4096 MB or more recommended." >&2
   fi
 
-  echo "[build] ONNX モデルを HuggingFace からビルドしています (~5-10 分, RAM 4-6 GB 必要)"
-  echo "[build] 出力先: ${model_target}"
+  echo "[build] Building ONNX model from HuggingFace (~5-10 min, needs 4-6 GB RAM)"
+  echo "[build] Output: ${model_target}"
   build_onnx_impl "${model_target}" "${quant}" "${revision}"
-  echo "[build] ONNX モデルのビルドと検証が完了しました: ${model_target}"
+  echo "[build] ONNX model build and verification complete: ${model_target}"
 }
 
 build_onnx_always() {
   build_onnx_impl "$@"
-  echo "[build] 完了。生成ファイル:"
+  echo "[build] Complete. Generated files:"
   ls -lh "${1}"
 }

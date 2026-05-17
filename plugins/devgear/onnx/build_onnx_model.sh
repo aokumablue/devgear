@@ -76,8 +76,8 @@ case "${QUANT}" in
     ;;
 esac
 
-echo "[build] ONNX モデルビルドを開始します (quant=${QUANT})"
-echo "[build] 出力先: ${OUT_DIR}"
+echo "[build] Starting ONNX model build (quant=${QUANT})"
+echo "[build] Output: ${OUT_DIR}"
 
 # shellcheck source=_build_onnx_lib.sh
 source "${SCRIPT_DIR}/_build_onnx_lib.sh"

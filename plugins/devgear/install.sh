@@ -82,8 +82,8 @@ ensure_venv_module() {
 
   # sudo インストールに明示的な許可が必要
   if [[ "${ASSUME_YES}" != "1" ]]; then
-    echo "[devgear] sudo を使って python3-venv をインストールします。" >&2
-    echo "[devgear] 許可するには DEVGEAR_INSTALL_ASSUME_YES=1 を設定するか --assume-yes を指定してください。" >&2
+    echo "[devgear] Will install python3-venv using sudo." >&2
+    echo "[devgear] To allow, set DEVGEAR_INSTALL_ASSUME_YES=1 or specify --assume-yes." >&2
     exit 1
   fi
 
@@ -91,31 +91,31 @@ ensure_venv_module() {
   py_ver="$("${PYTHON3}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 
   if command -v apt-get >/dev/null 2>&1; then
-    echo "[devgear] sudo apt-get install python${py_ver}-venv を実行します"
+    echo "[devgear] Running: sudo apt-get install python${py_ver}-venv"
     sudo apt-get update -qq
     sudo apt-get install -y "python${py_ver}-venv" \
       || sudo apt-get install -y python3-venv
   elif command -v dnf >/dev/null 2>&1; then
-    echo "[devgear] sudo dnf install python${py_ver}-devel python3-virtualenv を実行します"
+    echo "[devgear] Running: sudo dnf install python${py_ver}-devel python3-virtualenv"
     sudo dnf install -y "python${py_ver}-devel" python3-virtualenv \
       || sudo dnf install -y python3-virtualenv
   elif command -v yum >/dev/null 2>&1; then
-    echo "[devgear] sudo yum install python3-virtualenv を実行します"
+    echo "[devgear] Running: sudo yum install python3-virtualenv"
     sudo yum install -y python3-virtualenv
   elif command -v brew >/dev/null 2>&1; then
-    echo "[devgear] brew install python@${py_ver} を実行します"
+    echo "[devgear] Running: brew install python@${py_ver}"
     brew install "python@${py_ver}" || brew install python3
   else
-    echo "Error: python3-venv が見つからず、自動インストールにも失敗しました。" >&2
-    echo "       手動で python3-venv をインストールしてから再実行してください。" >&2
+    echo "Error: python3-venv not found and automatic installation failed." >&2
+    echo "       Please install python3-venv manually and try again." >&2
     exit 1
   fi
 
   if ! "${PYTHON3}" -m venv --help >/dev/null 2>&1; then
-    echo "Error: python3-venv のインストール後も venv が使えません。" >&2
+    echo "Error: python3-venv installation completed but venv module is still not available." >&2
     exit 1
   fi
-  echo "[devgear] python3-venv インストール完了"
+  echo "[devgear] python3-venv installation complete"
 }
 
 # 既存 venv の stale symlink を削除する
@@ -175,7 +175,7 @@ ensure_settings_json() {
     cp -- "${DEVGEAR_TRUSTED_KEY_FILE}" "${trust_dir}/maintainer.asc"
     chmod 0600 "${trust_dir}/maintainer.asc"
     GNUPGHOME="${gnupg_dir}" gpg --import "${trust_dir}/maintainer.asc" 2>/dev/null || true
-    echo "[devgear] 信頼鍵を import しました: ${trust_dir}/gnupg"
+    echo "[devgear] Trust key imported: ${trust_dir}/gnupg"
   fi
 
   "${PYTHON3}" - "${SETTINGS_TEMPLATE_PATH}" "${SETTINGS_PATH}" <<'PY'
@@ -252,7 +252,7 @@ _replace_with_symlink() {
   elif [[ -L "${target_venv}" ]]; then
     rm -f -- "${target_venv}"
   elif [[ -e "${target_venv}" ]]; then
-    echo "[devgear] Warning: ${target_venv} は予期しないファイル種別のためスキップします" >&2
+    echo "[devgear] Warning: ${target_venv} is unexpected file type, skipping" >&2
     return 0
   fi
   echo "[devgear] Symlinking .venv: ${target_venv} -> ${VENV_DIR}"
