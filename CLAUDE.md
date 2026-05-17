@@ -15,7 +15,9 @@
 
 - Python は `python3` を使う
 - 変更後は `.venv` を有効化して `python3 -m pytest -q` と `ruff check plugins/devgear/src` が成功することを確認（警告なし）
-- `.venv-modelbuild` はメンテナ専用の ONNX ビルド用。本体 `plugins/devgear/.venv` とは統合しない（torch pickle RCE リスクと 5GB 配布回避）
+- venv は 2 種類。両方とも `~/.devgear/` 配下に置く
+  - `~/.devgear/.venv` — 本体ランタイム用（`install.sh` が作成）。Claude/Copilot 各キャッシュフォルダには symlink を張る
+  - `~/.devgear/.venv-modelbuild` — ONNX ビルド専用（初回のみ自動作成）。torch pickle RCE リスクと 5GB 配布回避のため本体 venv とは分離する
 
 ## スコープ規律
 

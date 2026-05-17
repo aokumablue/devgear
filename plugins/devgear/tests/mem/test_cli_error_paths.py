@@ -119,7 +119,7 @@ def test_session_end_inner_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     db = FakeDB([chunk])
     warnings: list[str] = []
     monkeypatch.setattr(cli.log, "warning", lambda msg, *args: warnings.append(msg % args if args else msg))
-    monkeypatch.setattr(cli, "embed", lambda texts, model: [[0.1, 0.2]])
+    monkeypatch.setattr(cli, "embed", lambda texts: [[0.1, 0.2]])
     monkeypatch.setattr(
         bridge_mod,
         "sync_session_to_observations",

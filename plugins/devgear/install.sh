@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # install.sh
-# devgear の Python 依存を repo-local の .venv に導入し、初回の ~/.devgear/settings.json を作成する。
+# devgear の Python 依存を ~/.devgear/.venv に導入し、初回の ~/.devgear/settings.json を作成する。
+# Claude / Copilot どちらか片方で実行すれば両方から共有できる。
 # Ubuntu と macOS に対応。
 # 使い方:
 #   bash install.sh
@@ -193,6 +194,15 @@ PY
 }
 
 install_user_python() {
+  # 旧パス（REPO_ROOT/.venv）に実体 venv が残っていれば削除する
+  if [[ -d "${_LEGACY_VENV}/bin" && -f "${_LEGACY_VENV}/pyvenv.cfg" ]]; then
+    echo "[devgear] Removing legacy venv at ${_LEGACY_VENV} (migrated to ${VENV_DIR})"
+    rm -rf -- "${_LEGACY_VENV}"
+  elif [[ -L "${_LEGACY_VENV}" ]]; then
+    echo "[devgear] Removing stale symlink at ${_LEGACY_VENV}"
+    rm -f -- "${_LEGACY_VENV}"
+  fi
+
   check_and_reset_venv
   ensure_virtualenv
 
@@ -226,8 +236,30 @@ install_user_python() {
   fi
 }
 
+# キャッシュディレクトリ内の .venv を VENV_DIR へのシンボリックリンクに差し替える共通処理。
+# venv 実体は ~/.devgear/.venv に一元化したため、キャッシュ内の旧実体 venv もレガシーとして削除する。
+_replace_with_symlink() {
+  local target_venv="$1"
+  # 既に正しいリンクが張られている場合はスキップ
+  if [[ -L "${target_venv}" && "$(readlink "${target_venv}")" == "${VENV_DIR}" ]]; then
+    echo "[devgear] .venv already linked: ${target_venv}"
+    return 0
+  fi
+  # キャッシュ内の旧実体 venv は削除して symlink に置換する
+  if [[ -d "${target_venv}" && -f "${target_venv}/pyvenv.cfg" ]]; then
+    echo "[devgear] Removing legacy venv at ${target_venv} (replacing with symlink)"
+    rm -rf -- "${target_venv}"
+  elif [[ -L "${target_venv}" ]]; then
+    rm -f -- "${target_venv}"
+  elif [[ -e "${target_venv}" ]]; then
+    echo "[devgear] Warning: ${target_venv} は予期しないファイル種別のためスキップします" >&2
+    return 0
+  fi
+  echo "[devgear] Symlinking .venv: ${target_venv} -> ${VENV_DIR}"
+  ln -sfn -- "${VENV_DIR}" "${target_venv}"
+}
+
 # Claude Code キャッシュに .venv シンボリックリンクを張る
-# TOCTOU 対策: 対象が devgear venv (pyvenv.cfg 存在) ならスキップ。symlink / 不存在のみ操作する。
 update_claude_cache_symlinks() {
   [[ -d "${HOME}/.claude/plugins/cache/devgear" ]] || return 0
 
@@ -237,61 +269,17 @@ update_claude_cache_symlinks() {
     for ver_dir in "${org_dir}"/*; do
       [[ -L "${ver_dir}" ]] && continue
       [[ -d "${ver_dir}" ]] || continue
-      local target_venv="${ver_dir}/.venv"
-      # VENV_DIR 自身はスキップ
-      if [[ "${target_venv}" == "${VENV_DIR}" ]]; then
-        echo "[devgear] Claude cache .venv is the install target itself, skipping symlink"
-        continue
-      fi
-      # 既に正しいリンクが張られている場合はスキップ
-      if [[ -L "${target_venv}" && "$(readlink "${target_venv}")" == "${VENV_DIR}" ]]; then
-        echo "[devgear] Claude cache .venv already linked: ${target_venv}"
-        continue
-      fi
-      # 実体 venv（pyvenv.cfg が存在）は上書きしない（TOCTOU 保護）
-      if [[ -e "${target_venv}/pyvenv.cfg" ]]; then
-        echo "[devgear] Warning: ${target_venv} は実体 venv のためスキップします" >&2
-        continue
-      fi
-      # symlink または不存在のみ操作（それ以外はスキップ）
-      if [[ ! -L "${target_venv}" && -e "${target_venv}" ]]; then
-        echo "[devgear] Warning: ${target_venv} は予期しないファイル種別のためスキップします" >&2
-        continue
-      fi
-      echo "[devgear] Symlinking .venv into Claude cache: ${target_venv} -> ${VENV_DIR}"
-      rm -- "${target_venv}" 2>/dev/null || true
-      ln -sfn -- "${VENV_DIR}" "${target_venv}"
+      _replace_with_symlink "${ver_dir}/.venv"
     done
   done
 }
 
 # Copilot キャッシュに .venv シンボリックリンクを張る
-# TOCTOU 対策: update_claude_cache_symlinks と同じ保護を適用する。
 update_copilot_cache_symlink() {
   local copilot_plugin_dir="${HOME}/.copilot/installed-plugins/devgear/devgear"
   [[ -d "${copilot_plugin_dir}" ]] || return 0
 
-  local target_venv="${copilot_plugin_dir}/.venv"
-  if [[ "${target_venv}" == "${VENV_DIR}" ]]; then
-    echo "[devgear] Copilot cache .venv is the install target itself, skipping symlink"
-    return 0
-  fi
-  if [[ -L "${target_venv}" && "$(readlink "${target_venv}")" == "${VENV_DIR}" ]]; then
-    echo "[devgear] Copilot cache .venv already linked: ${target_venv}"
-    return 0
-  fi
-  # 実体 venv は上書きしない
-  if [[ -e "${target_venv}/pyvenv.cfg" ]]; then
-    echo "[devgear] Warning: ${target_venv} は実体 venv のためスキップします" >&2
-    return 0
-  fi
-  if [[ ! -L "${target_venv}" && -e "${target_venv}" ]]; then
-    echo "[devgear] Warning: ${target_venv} は予期しないファイル種別のためスキップします" >&2
-    return 0
-  fi
-  echo "[devgear] Symlinking .venv into Copilot cache: ${target_venv} -> ${VENV_DIR}"
-  rm -- "${target_venv}" 2>/dev/null || true
-  ln -sfn -- "${VENV_DIR}" "${target_venv}"
+  _replace_with_symlink "${copilot_plugin_dir}/.venv"
 }
 
 # ---- 引数パース ----
@@ -330,10 +318,12 @@ done
 
 # ---- 変数確定（引数パース後に設定） ----
 
-VENV_DIR="${REPO_ROOT}/.venv"
-VENV_PYTHON="${VENV_DIR}/bin/python3"
 : "${HOME:?Error: HOME must be set.}"
 SETTINGS_DIR="${HOME}/.devgear"
+VENV_DIR="${SETTINGS_DIR}/.venv"
+VENV_PYTHON="${VENV_DIR}/bin/python3"
+# 旧パスに実体 venv が残っていれば削除する（SETTINGS_DIR/.venv に移行済み）
+_LEGACY_VENV="${REPO_ROOT}/.venv"
 SETTINGS_PATH="${SETTINGS_DIR}/settings.json"
 SETTINGS_TEMPLATE_PATH="${REPO_ROOT}/settings.json"
 

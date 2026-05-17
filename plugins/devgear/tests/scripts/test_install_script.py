@@ -260,7 +260,7 @@ def test_install_dev_script_runs_user_and_dev_steps(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert (home / ".devgear" / "settings.json").exists()
-    assert (repo / "plugins" / "devgear" / ".venv" / "bin" / "python3").exists()
+    assert (home / ".devgear" / ".venv" / "bin" / "python3").exists()
 
     log = log_path.read_text(encoding="utf-8")
     log_lines = log.splitlines()

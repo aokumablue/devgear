@@ -8,7 +8,7 @@
 #   ./plugins/devgear/onnx/build_onnx_model.sh --quant fp16 --revision <SHA>
 #
 # 出力先: ~/.devgear/models/（install.sh と共有）
-# 使用する venv: .venv-modelbuild/（リポ管理外、このスクリプトが自動作成）
+# 使用する venv: ~/.devgear/.venv-modelbuild（初回のみ自動作成）
 #
 # 量子化方式:
 #   FP16: onnxruntime.transformers.optimizer を使用（CPU 対応）。約 600 MB。

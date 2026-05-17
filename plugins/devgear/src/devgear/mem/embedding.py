@@ -111,9 +111,10 @@ def _get_session() -> tuple[Any, Any]:
                     "plugins/devgear/install.sh を実行してモデルを統合してください。"
                 )
 
-            import onnx  # type: ignore[import-untyped]
             import onnxruntime as ort  # type: ignore[import-untyped]
             from tokenizers import Tokenizer  # type: ignore[import-untyped]
+
+            import onnx  # type: ignore[import-untyped]
 
             log.info(
                 "モデルロード: %s@%s",

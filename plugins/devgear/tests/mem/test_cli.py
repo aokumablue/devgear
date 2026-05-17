@@ -555,9 +555,22 @@ class TestSessionInitPgIntegration:
 class TestMainExitCode:
     """main() が例外発生時に exit_code=1 を返すことを確認する。"""
 
-    def test_settings_load_failure_returns_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """_load_settings_or_raise が例外を送出すると exit_code=1 を返す。"""
+    def test_settings_load_failure_returns_0_for_session_start(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """SESSION_START コマンドで設定失敗時はフック継続のため exit_code=0 を返す。"""
         monkeypatch.setattr(sys, "argv", ["python", "context"])
+        monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+        monkeypatch.setattr(
+            cli, "_load_settings_or_raise", lambda: (_ for _ in ()).throw(RuntimeError("設定失敗"))
+        )
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            result = cli.main()
+        assert result == 0
+        assert "設定/ログ初期化失敗" in stderr.getvalue()
+
+    def test_settings_load_failure_returns_1_for_normal_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """通常コマンドで設定失敗時は exit_code=1 を返す。"""
+        monkeypatch.setattr(sys, "argv", ["python", "search"])
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
         monkeypatch.setattr(
             cli, "_load_settings_or_raise", lambda: (_ for _ in ()).throw(RuntimeError("設定失敗"))

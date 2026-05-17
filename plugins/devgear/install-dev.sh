@@ -65,7 +65,7 @@ done
 
 # ---- 変数確定（引数パース後に設定） ----
 
-VENV_DIR="${REPO_ROOT}/.venv"
+VENV_DIR="${HOME}/.devgear/.venv"
 VENV_PYTHON="${VENV_DIR}/bin/python3"
 
 # ---- ユーザ向けインストール（前提条件チェックを含む） ----

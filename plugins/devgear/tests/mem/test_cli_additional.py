@@ -177,7 +177,7 @@ def test_handle_session_end_and_compact(monkeypatch: pytest.MonkeyPatch, tmp_pat
     import devgear.mem.compaction as compaction_mod
 
     monkeypatch.setattr(cli, "_open_db", lambda settings: open_fake_db(db))
-    monkeypatch.setattr(cli, "embed", lambda texts, model: [[0.1, 0.2]])
+    monkeypatch.setattr(cli, "embed", lambda texts: [[0.1, 0.2]])
     monkeypatch.setattr(bridge_mod, "sync_session_to_observations", lambda db, session_id: 1)
     monkeypatch.setattr(compaction_mod, "detect_low_quality", lambda db: ["c1"])
     monkeypatch.setattr(compaction_mod, "find_near_duplicates", lambda db: [("c1", "c2")])
@@ -432,7 +432,7 @@ def test_main_error_path_logging_contract_for_normal_command(
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     monkeypatch.setattr(sys, "argv", ["python", "search"])
 
-    assert cli.main() == 0
+    assert cli.main() == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert any("コマンド search 失敗: boom" in error for error in errors)
@@ -466,7 +466,7 @@ def test_handle_session_end_auto_compact_error(monkeypatch: pytest.MonkeyPatch, 
     import devgear.mem.compaction as compaction_mod
 
     monkeypatch.setattr(cli, "_open_db", lambda settings: open_fake_db(db))
-    monkeypatch.setattr(cli, "embed", lambda texts, model: [[0.1, 0.2]])
+    monkeypatch.setattr(cli, "embed", lambda texts: [[0.1, 0.2]])
     monkeypatch.setattr(bridge_mod, "sync_session_to_observations", lambda db, session_id: 1)
     monkeypatch.setattr(compaction_mod, "detect_low_quality", lambda db: (_ for _ in ()).throw(RuntimeError("compact boom")))
     monkeypatch.setattr(compaction_mod, "find_near_duplicates", lambda db: [])
@@ -854,15 +854,14 @@ def test_embed_delegates_to_embedding_module(monkeypatch: pytest.MonkeyPatch) ->
 
     received: dict[str, object] = {}
 
-    def fake_embed(texts: list[str], model: str) -> list[list[float]]:
+    def fake_embed(texts: list[str]) -> list[list[float]]:
         received["texts"] = texts
-        received["model"] = model
         return [[0.1, 0.2]]
 
     monkeypatch.setattr(embedding_mod, "embed", fake_embed)
-    result = cli.embed(["a"], "model-x")
+    result = cli.embed(["a"])
     assert result == [[0.1, 0.2]]
-    assert received == {"texts": ["a"], "model": "model-x"}
+    assert received == {"texts": ["a"]}
 
 
 def test_main_help_with_session_start_command_prints_wrapper(
