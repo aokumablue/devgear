@@ -26,8 +26,7 @@
 | **デスクトップ通知** | `Stop` | タスクサマリーの macOS デスクトップ通知を送信（standard+） |
 | **セッション終了マーカー** | `SessionEnd` | ライフサイクルマーカーとクリーンアップログ |
 
-`SessionStart` の `session_install` は、`~/.devgear/plugin_installed_version` と `plugin.json` の version が異なるときだけ `install.sh` を実行します。
-進捗や `install.sh` の出力は主に stderr に出るため、起動直後は何も起きていないように見えることがあります。
+`SessionStart` の `session_install` は `.venv` symlink の検査・修復に加えて、`~/.devgear/plugin_installed_version` と `plugin.json` の version が異なるときに `install.sh` を自動実行します。ONNX モデルビルド（5〜10 分）はバックグラウンドで走るため、SessionStart 自体はブロックしません。ビルド中は mem 機能が一時的に利用不可となり、stderr に `onnx building...` が出ます。完了後は自動的に復旧します。ビルドログは `~/.devgear/logs/modelbuild.log` を参照してください。
 
 ## フックのカスタマイズ
 

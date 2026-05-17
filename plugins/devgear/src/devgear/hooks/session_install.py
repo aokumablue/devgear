@@ -4,6 +4,7 @@ install.sh の自動実行を管理する SessionStart フック。
 
 ~/.devgear/plugin_installed_version のバージョンと plugin.json のバージョンを比較し、
 差異がある場合のみ install.sh を実行して仮想環境を再構築する。
+ONNX モデルビルドは DEVGEAR_INSTALL_ONNX_ASYNC=1 でバックグラウンド非同期実行に切り替わる。
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from devgear.lib.subprocess_utils import run_text
 _PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 _DEVGEAR_DIR = Path.home() / ".devgear"
 _VERSION_FILE = _DEVGEAR_DIR / "plugin_installed_version"
-_LOCK_FILE = _DEVGEAR_DIR / "install.lock"
 _VENV_DIR = Path.home() / ".devgear" / ".venv"
 
 
@@ -149,59 +149,34 @@ def _get_installed_version() -> str | None:
     return _VERSION_FILE.read_text(encoding="utf-8").strip()
 
 
-def _write_installed_version(version: str) -> None:
-    """バージョンを ~/.devgear/plugin_installed_version に書き込む。
+def _precheck_install_target(plugin_root: Path) -> Path | None:
+    """install.sh の存在をチェックして返す。プラグインルート外は拒否する。
 
     Args:
-        version: 書き込むバージョン文字列。
+        plugin_root: 検証済みプラグインルート。
 
     Returns:
-        None: 値を返しません。
-
-    Raises:
-        例外は発生しません。
+        install.sh の Path。チェック失敗時は None。
     """
-    _DEVGEAR_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(_DEVGEAR_DIR, 0o700)
-    _VERSION_FILE.write_text(version + "\n", encoding="utf-8")
-    os.chmod(_VERSION_FILE, 0o600)
-
-
-def _precheck_install_target() -> tuple[Path, str] | None:
-    """事前チェックを行い、install 実行対象を返す。"""
-    plugin_root = _resolve_plugin_root()
-    if plugin_root is None:
-        return None
-
-    current_version = _get_plugin_version(plugin_root)
-    if current_version is None:
-        print("[SessionInstall] バージョンを取得できませんでした。スキップします。", file=sys.stderr)
-        return None
-
-    installed_version = _get_installed_version()
-    if installed_version == current_version:
-        # 軽量修復: version 一致でも .venv symlink が欠落していれば再作成のみ実行する
-        if _should_repair_venv_symlink(plugin_root):
-            _repair_venv_symlink(plugin_root)
-        print(f"[SessionInstall] 既にインストール済みです: {sanitize_log_value(current_version)}", file=sys.stderr)
-        return None
-
-    print(
-        "[SessionInstall] バージョン変更を検出しました: "
-        f"{sanitize_log_value(repr(installed_version))} → {sanitize_log_value(repr(current_version))}",
-        file=sys.stderr,
-    )
-
     install_sh = (plugin_root / "install.sh").resolve()
     if not install_sh.is_file() or not install_sh.is_relative_to(plugin_root):
         print("[SessionInstall] install.sh がプラグインルート外です。スキップします。", file=sys.stderr)
         return None
+    return install_sh
 
-    return install_sh, current_version
 
+def _lock_phase_should_skip(plugin_root: Path, current_version: str) -> bool:
+    """ロック取得後の再チェックで処理スキップ要否を返す。
 
-def _lock_phase_should_skip(current_version: str) -> bool:
-    """ロック取得後の再チェックを行い、処理スキップ要否を返す。"""
+    別プロセスが先にインストールを完了している場合に True を返す。
+
+    Args:
+        plugin_root: プラグインルートディレクトリのパス。
+        current_version: plugin.json から取得した最新バージョン。
+
+    Returns:
+        スキップすべき場合は True。
+    """
     try:
         installed_version = _get_installed_version()
     except OSError as e:
@@ -213,22 +188,41 @@ def _lock_phase_should_skip(current_version: str) -> bool:
 
     if installed_version == current_version:
         print(f"[SessionInstall] 別プロセスがインストール済み: {sanitize_log_value(current_version)}", file=sys.stderr)
+        if _should_repair_venv_symlink(plugin_root):
+            _repair_venv_symlink(plugin_root)
         return True
 
     return False
 
 
 def _run_install(install_sh: Path) -> subprocess.CompletedProcess[str] | None:
-    """install.sh を実行し、失敗時はログを出して None を返す。"""
+    """install.sh を ONNX 非同期モードで実行し結果を返す。失敗時は None を返す。
+
+    Args:
+        install_sh: 実行する install.sh の Path。
+
+    Returns:
+        subprocess.CompletedProcess。実行失敗時は None。
+    """
     try:
-        return run_text(["bash", str(install_sh)], timeout=1800)
+        # DEVGEAR_INSTALL_ONNX_ASYNC=1 で ONNX ビルドをバックグラウンドに切り出す（タイムアウト回避）
+        return run_text(["bash", str(install_sh)], timeout=120, extra_env={"DEVGEAR_INSTALL_ONNX_ASYNC": "1"})
     except (subprocess.SubprocessError, OSError) as e:
         print(f"[SessionInstall] install.sh の実行に失敗しました: {_sanitize_exception(e)}", file=sys.stderr)
         return None
 
 
-def _handle_install_result(result: subprocess.CompletedProcess[str], current_version: str) -> None:
-    """install 実行結果を出力し、成功時のみバージョンを書き戻す。"""
+def _handle_install_result(result: subprocess.CompletedProcess[str]) -> bool:
+    """install 実行結果を stderr に出力し、成功なら True を返す。
+
+    バージョン書き込みは install.sh 側で行うためここでは行わない。
+
+    Args:
+        result: subprocess の実行結果。
+
+    Returns:
+        install.sh が正常終了した場合 True、非ゼロ終了の場合 False。
+    """
     if result.stdout:
         print(sanitize_log_value(result.stdout, max_len=4000), file=sys.stderr)
     if result.stderr:
@@ -239,22 +233,17 @@ def _handle_install_result(result: subprocess.CompletedProcess[str], current_ver
             f"[SessionInstall] install.sh が失敗しました (exit {result.returncode})。次回再試行します。",
             file=sys.stderr,
         )
-        return
+        return False
 
-    try:
-        _write_installed_version(current_version)
-    except OSError as e:
-        print(
-            f"[SessionInstall] インストール済みバージョンの保存に失敗しました: {_sanitize_exception(e)}",
-            file=sys.stderr,
-        )
-        return
-
-    print(f"[SessionInstall] インストール完了: {sanitize_log_value(current_version)}", file=sys.stderr)
+    print("[SessionInstall] インストール完了", file=sys.stderr)
+    return True
 
 
 def run(_raw_input: str) -> str:
     """install.sh の実行判定と実行を行い hookSpecificOutput の JSON を返す。
+
+    バージョン一致時は .venv symlink 修復のみ行う。
+    バージョン不一致・未インストール時は install.sh を同期実行（ONNX のみ非同期）。
 
     Args:
         _raw_input: フックへの標準入力（未使用）。
@@ -265,30 +254,61 @@ def run(_raw_input: str) -> str:
     Raises:
         例外は発生しません。
     """
-    prechecked = _precheck_install_target()
-    if prechecked is None:
+    plugin_root = _resolve_plugin_root()
+    if plugin_root is None:
         return _session_start_output()
 
-    install_sh, current_version = prechecked
+    current_version = _get_plugin_version(plugin_root)
+    installed_version = _get_installed_version()
 
-    # 複数セッション同時起動時の .venv レース破壊を防ぐため flock で排他制御する。
+    # version が一致しているなら install をスキップし、symlink 修復のみ
+    if current_version is not None and installed_version == current_version:
+        if _should_repair_venv_symlink(plugin_root):
+            _repair_venv_symlink(plugin_root)
+        print(f"[SessionInstall] 既にインストール済みです: {sanitize_log_value(str(current_version))}", file=sys.stderr)
+        return _session_start_output()
+
+    print(
+        "[SessionInstall] バージョン変更を検出しました: "
+        f"{sanitize_log_value(repr(installed_version))} → {sanitize_log_value(repr(current_version))}",
+        file=sys.stderr,
+    )
+
+    # version 不一致 or 未インストール: install.sh を同期実行（ONNX のみ非同期）
     _DEVGEAR_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(_DEVGEAR_DIR, 0o700)
+    lock_path = _DEVGEAR_DIR / "install.lock"
 
     try:
-        with install_lock(_LOCK_FILE):
-            if _lock_phase_should_skip(current_version):
+        with install_lock(lock_path):
+            # 別プロセスが先にインストールを完了している可能性をロック取得後に再チェック
+            if current_version is not None and _lock_phase_should_skip(plugin_root, current_version):
+                return _session_start_output()
+
+            install_sh = _precheck_install_target(plugin_root)
+            if install_sh is None:
                 return _session_start_output()
 
             result = _run_install(install_sh)
             if result is None:
                 return _session_start_output()
 
-            _handle_install_result(result, current_version)
-            return _session_start_output()
+            # install 失敗時は symlink 修復・onnx 通知をスキップして早期 return
+            if not _handle_install_result(result):
+                return _session_start_output()
     except OSError as e:
         print(f"[SessionInstall] ロック取得失敗: {_sanitize_exception(e)}", file=sys.stderr)
         return _session_start_output()
+
+    # install 成功時のみ symlink 修復と ONNX 通知を行う
+    if _should_repair_venv_symlink(plugin_root):
+        _repair_venv_symlink(plugin_root)
+
+    # バックグラウンドで ONNX が走っている可能性を通知
+    if not (Path.home() / ".devgear" / "models" / "model.onnx").exists():
+        print("[SessionInstall] onnx building...", file=sys.stderr)
+
+    return _session_start_output()
 
 
 def main() -> int:

@@ -141,6 +141,13 @@ def prepare_temp_repo(tmp_path: Path) -> Path:
         ROOT / "plugins" / "devgear" / "onnx" / "_build_onnx_lib.sh",
         plugin_onnx_dir / "_build_onnx_lib.sh",
     )
+    shutil.copy2(
+        ROOT / "plugins" / "devgear" / "onnx" / "_run_onnx_background.sh",
+        plugin_onnx_dir / "_run_onnx_background.sh",
+    )
+    claude_plugin_dir = plugin_dir / ".claude-plugin"
+    claude_plugin_dir.mkdir(parents=True)
+    shutil.copy2(ROOT / "plugins" / "devgear" / ".claude-plugin" / "plugin.json", claude_plugin_dir / "plugin.json")
     return repo
 
 
@@ -347,3 +354,89 @@ def test_install_script_surfaces_pip_failure_output(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "failing pip stdout" in result.stderr
     assert "failing pip stderr" in result.stderr
+    # H-5: install.sh がエラー終了したときは plugin_installed_version を記録しないこと
+    version_file = home / ".devgear" / "plugin_installed_version"
+    assert not version_file.exists(), "install.sh 失敗時に plugin_installed_version が作成されてはいけない"
+
+
+def test_install_script_async_onnx_launches_background(tmp_path: Path) -> None:
+    """DEVGEAR_INSTALL_ONNX_ASYNC=1 のとき ONNX バックグラウンド起動メッセージが出ること。"""
+    repo = prepare_temp_repo(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    home.mkdir()
+    log_path = tmp_path / "python.log"
+
+    write_fake_python(bin_dir / "python3", log_path)
+    write_fake_python(bin_dir / "python3.12", log_path)
+    write_fake_python(bin_dir / "python3.13", log_path)
+
+    result = run_script(
+        repo / "plugins" / "devgear" / "install.sh",
+        ["--repo-root", str(repo / "plugins" / "devgear")],
+        env={
+            "HOME": str(home),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "DEVGEAR_INSTALL_ONNX_ASYNC": "1",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    # バックグラウンド起動の旨が stdout に出る（model.onnx が無いとき）
+    assert "Launching ONNX build in background" in result.stdout
+
+
+def test_install_script_async_onnx_uses_stub_no_orphan_process(tmp_path: Path) -> None:
+    """DEVGEAR_INSTALL_ONNX_ASYNC=1 のバックグラウンドスクリプトをスタブに差し替え、孤立プロセスを起動しないこと。"""
+    repo = prepare_temp_repo(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    home.mkdir()
+    log_path = tmp_path / "python.log"
+
+    write_fake_python(bin_dir / "python3", log_path)
+    write_fake_python(bin_dir / "python3.12", log_path)
+    write_fake_python(bin_dir / "python3.13", log_path)
+
+    # L-4: 実際の ONNX ビルドプロセスが孤立しないよう no-op スタブで上書き
+    bg_stub = repo / "plugins" / "devgear" / "onnx" / "_run_onnx_background.sh"
+    write_exec(bg_stub, "#!/usr/bin/env bash\n# stub: no-op for test\nexit 0\n")
+
+    result = run_script(
+        repo / "plugins" / "devgear" / "install.sh",
+        ["--repo-root", str(repo / "plugins" / "devgear")],
+        env={
+            "HOME": str(home),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "DEVGEAR_INSTALL_ONNX_ASYNC": "1",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Launching ONNX build in background" in result.stdout
+
+
+def test_install_script_does_not_record_version_when_skip_python(tmp_path: Path) -> None:
+    """SKIP_PYTHON=1（--skip-python）のとき plugin_installed_version を記録しないこと（H-2）。"""
+    repo = prepare_temp_repo(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    home.mkdir()
+
+    write_fake_psql(bin_dir / "psql")
+
+    result = run_script(
+        repo / "plugins" / "devgear" / "install.sh",
+        ["--repo-root", str(repo / "plugins" / "devgear"), "--skip-python"],
+        env={
+            "HOME": str(home),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        },
+    )
+
+    version_file = home / ".devgear" / "plugin_installed_version"
+    assert result.returncode == 0, result.stderr
+    assert not version_file.exists(), "SKIP_PYTHON=1 のとき plugin_installed_version が作成されてはいけない"

@@ -57,7 +57,8 @@ class SearchService:
         import devgear.mem.embedding as _emb
 
         query_embedding = _emb.embed_query(query, self.settings.embedding_model)
-        vector_results = self.db.vec_search(query_embedding, limit=fetch_limit)
+        # model.onnx 未完了時は embed_query が [] を返すためベクトル検索をスキップ
+        vector_results = self.db.vec_search(query_embedding, limit=fetch_limit) if query_embedding else []
 
         # 3. RRF で統合
         keyword_ids = [cid for cid, _ in keyword_results]
@@ -139,6 +140,10 @@ class SearchService:
                 return []
 
             query_embedding = _emb.embed_query(query, self.settings.embedding_model)
+            # model.onnx 未完了時は embed_query が [] を返す。
+            # PG の team_search はベクトル引数が必須のため FTS フォールバックなし。
+            if not query_embedding:
+                return []
             pg_results = pg_db.team_search(
                 query,
                 query_embedding,

@@ -169,6 +169,21 @@ ensure_settings_json() {
   mkdir -p "${trust_dir}"
   chmod 0700 "${trust_dir}"
   if [[ -n "${DEVGEAR_TRUSTED_KEY_FILE:-}" && -f "${DEVGEAR_TRUSTED_KEY_FILE}" ]]; then
+    # symlink 経由攻撃と HOME 外参照を防ぐ
+    if [[ -L "${DEVGEAR_TRUSTED_KEY_FILE}" ]]; then
+      echo "Error: DEVGEAR_TRUSTED_KEY_FILE must not be a symlink" >&2
+      exit 1
+    fi
+    local key_dir
+    key_dir="$(cd "$(dirname "${DEVGEAR_TRUSTED_KEY_FILE}")" 2>/dev/null && pwd)" || {
+      echo "Error: invalid DEVGEAR_TRUSTED_KEY_FILE (cannot resolve directory)" >&2
+      exit 1
+    }
+    local resolved_key="${key_dir}/$(basename "${DEVGEAR_TRUSTED_KEY_FILE}")"
+    if [[ "${resolved_key}" != "${HOME}/"* ]]; then
+      echo "Error: DEVGEAR_TRUSTED_KEY_FILE must reside under HOME" >&2
+      exit 1
+    fi
     local gnupg_dir="${trust_dir}/gnupg"
     mkdir -p "${gnupg_dir}"
     chmod 0700 "${gnupg_dir}"
@@ -224,10 +239,27 @@ install_user_python() {
   pip_install_quiet --no-deps -e "${REPO_ROOT}"
 
   # ONNX モデルが未生成の場合は HuggingFace から自前ビルドする（model.onnx 存在時はスキップ）
-  # shellcheck source=onnx/_build_onnx_lib.sh
-  source "${SCRIPT_DIR}/onnx/_build_onnx_lib.sh"
-  local model_target="${HOME}/.devgear/models"
-  build_onnx_if_missing "${model_target}" "fp16"
+  if [[ "${DEVGEAR_INSTALL_ONNX_ASYNC:-0}" == "1" ]]; then
+    # SessionStart フックから呼ばれた場合: バックグラウンドで起動して即リターン
+    if [[ ! -f "${HOME}/.devgear/models/model.onnx" ]]; then
+      local bg_script="${SCRIPT_DIR}/onnx/_run_onnx_background.sh"
+      if [[ ! -f "${bg_script}" ]]; then
+        echo "[devgear] Warning: ONNX background script not found: ${bg_script}" >&2
+      else
+        echo "[devgear] Launching ONNX build in background. Log: ${HOME}/.devgear/logs/modelbuild.log"
+        # env -i で最小限の環境のみ渡し、PYTHONPATH/LD_PRELOAD 等の汚染を防ぐ
+        env -i HOME="${HOME}" PATH="${PATH}" LANG="${LANG:-C}" \
+          nohup setsid bash "${bg_script}" </dev/null >/dev/null 2>&1 &
+        disown
+      fi
+    fi
+  else
+    # 手動実行: 従来どおり同期ビルド
+    # shellcheck source=onnx/_build_onnx_lib.sh
+    source "${SCRIPT_DIR}/onnx/_build_onnx_lib.sh"
+    local model_target="${HOME}/.devgear/models"
+    build_onnx_if_missing "${model_target}" "fp16"
+  fi
 
   # 既存 settings.json のセキュリティ移行（パスワード分離・sslmode 強制）
   if [[ -f "${SETTINGS_PATH}" ]]; then
@@ -364,6 +396,24 @@ fi
 if [[ "${SKIP_PYTHON}" != "1" ]]; then
   echo "[devgear] Initializing mem database at ${SETTINGS_DIR}/mem.db"
   "${VENV_PYTHON}" -m devgear.mem setup
+fi
+
+# インストール済みバージョンを記録する（SKIP_PYTHON=1 のときは Python 未インストールなので記録しない）
+# SessionStart の session_install フックが参照する
+if [[ "${SKIP_PYTHON}" != "1" ]]; then
+  # ヒアドキュメント + 引数渡しでパスをシェルから分離してインジェクションを防ぐ
+  PLUGIN_VERSION="$(${PYTHON3} - "${SCRIPT_DIR}/.claude-plugin/plugin.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1]))["version"])
+PY
+)"
+  chmod 0700 "${SETTINGS_DIR}"
+  # mktemp + mv でアトミック書き込みし、並行プロセスによる部分読み取りを防ぐ
+  _ver_tmp="$(mktemp "${SETTINGS_DIR}/plugin_installed_version.XXXXXX")"
+  printf '%s\n' "${PLUGIN_VERSION}" > "${_ver_tmp}"
+  chmod 0600 "${_ver_tmp}"
+  mv -f "${_ver_tmp}" "${SETTINGS_DIR}/plugin_installed_version"
+  echo "[devgear] Recorded installed version: ${PLUGIN_VERSION}"
 fi
 
 echo "[devgear] OK"

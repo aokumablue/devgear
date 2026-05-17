@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,8 @@ _MODELS_DIR = Path.home() / ".devgear" / "models"
 _session: Any = None
 _tokenizer: Any = None
 _lock = threading.Lock()
+# model.onnx 不在警告を 1 度だけ出す（バックグラウンドビルド中の抑制）
+_onnx_unavailable_warned: bool = False
 
 # ruri-v3 の最大トークン長
 _MAX_LENGTH = 512
@@ -87,24 +90,30 @@ def _verify_tokenizer(tok_path: Path, models_dir: Path) -> None:
     raise ValueError("manifest.json に tokenizer.json のエントリがありません")
 
 
-def _get_session() -> tuple[Any, Any]:
+def _get_session() -> tuple[Any, Any] | tuple[None, None]:
     """ONNX セッションとトークナイザをスレッドセーフにシングルトンでロードする。
 
     2-phase 初期化: new_session / new_tokenizer を完成させてから一括代入する。
     途中で例外が発生した場合は _session / _tokenizer を None にリセットして再 raise する。
     これにより、部分的に初期化された状態が外部から見えることを防ぐ（CWE-667 / 状態不整合防止）。
+
+    model.onnx が存在しない場合（バックグラウンドビルド中など）は (None, None) を返す。
+    _onnx_unavailable_warned はプロセス内で 1 度だけ警告を出すフラグ。
+    ビルド完了後は model.onnx が配置されてこの分岐を通らなくなるため問題ない。
+    ONNX ビルド完了後のモデル利用はプロセス再起動後に反映される。
     """
-    global _session, _tokenizer
+    global _session, _tokenizer, _onnx_unavailable_warned
     with _lock:
         if _session is None or _tokenizer is None:
             model_path = _MODELS_DIR / "model.onnx"
             tok_path = _MODELS_DIR / "tokenizer.json"
 
             if not model_path.exists():
-                raise FileNotFoundError(
-                    f"model.onnx が見つかりません: {model_path}\n"
-                    "plugins/devgear/install.sh を実行してモデルを統合してください。"
-                )
+                # model.onnx 不在はバックグラウンドビルド中として扱い、空結果で返す
+                if not _onnx_unavailable_warned:
+                    print("[embedding] onnx building, mem temporarily unavailable", file=sys.stderr)
+                    _onnx_unavailable_warned = True
+                return (None, None)
             if not tok_path.exists():
                 raise FileNotFoundError(
                     f"tokenizer.json が見つかりません: {tok_path}\n"
@@ -161,10 +170,13 @@ def _encode_array(texts: list[str]) -> Any:
     """テキストリストを ONNX 推論でベクトル化し numpy 配列を返す（内部 API）。
 
     mean pooling + L2 正規化を適用する（ruri-v3 仕様）。
+    model.onnx が未完了の場合は None を返す。
     """
     import numpy as np  # type: ignore[import-untyped]
 
     session, tokenizer = _get_session()
+    if session is None or tokenizer is None:
+        return None
     encodings = tokenizer.encode_batch(texts)
 
     input_ids = np.array([e.ids for e in encodings], dtype=np.int64)
@@ -185,8 +197,14 @@ def _encode_array(texts: list[str]) -> Any:
 
 
 def _encode(texts: list[str]) -> list[list[float]]:
-    """テキストリストを ONNX 推論でベクトル化し Python リストを返す。"""
-    return _encode_array(texts).tolist()
+    """テキストリストを ONNX 推論でベクトル化し Python リストを返す。
+
+    model.onnx が未完了の場合は空リストを返す。
+    """
+    result = _encode_array(texts)
+    if result is None:
+        return []
+    return result.tolist()
 
 
 def embed(texts: list[str]) -> list[list[float]]:
@@ -202,6 +220,7 @@ def embed_query(query: str, embedding_model: str) -> list[float]:
     """検索クエリを埋め込みに変換する。ruri-v3 推奨プレフィックスを付与する。
 
     embedding_model が既定モデルと異なる場合は警告を出す（ランタイムで差し替え不可）。
+    model.onnx が未完了の場合は空リストを返す。
     """
     if embedding_model != _DEFAULT_EMBEDDING_MODEL:
         log.warning(
@@ -210,4 +229,6 @@ def embed_query(query: str, embedding_model: str) -> list[float]:
             _DEFAULT_EMBEDDING_MODEL,
         )
     result = _encode([f"検索クエリ: {query}"])
+    if not result:
+        return []
     return result[0]

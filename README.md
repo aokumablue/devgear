@@ -170,7 +170,7 @@ bash scripts/pg_setup_native.sh --help  # 全オプション表示
 
 - フックは常に strict として動作する
 - `mem` は `observe` → `session-init` → `SessionEnd` を中心に履歴を引き継ぎ、必要時のみ `SessionStart` で文脈を注入する
-- `SessionStart` の `session_install` は plugin version が変わった場合のみ `install.sh` を実行し、詳細ログは stderr に出る
+- `SessionStart` の `session_install` は `.venv` symlink を検査・修復し、プラグインバージョン変更時は `install.sh` を自動実行する。ONNX モデルビルドはバックグラウンドで実行されるためセッション開始はブロックしない。ビルドログは `~/.devgear/logs/modelbuild.log` を参照する。
 - 詳細なフック設定は `plugins/devgear/hooks/README.md` を参照する
 
 ## 何が入っているか

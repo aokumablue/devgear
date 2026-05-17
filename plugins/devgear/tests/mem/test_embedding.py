@@ -179,21 +179,50 @@ class TestEmbedQuery:
         norm = math.sqrt(sum(x * x for x in vec))
         assert abs(norm - 1.0) < 1e-5
 
+    def test_returns_empty_list_when_model_missing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """model.onnx が不在の場合は空リストを返す。"""
+        _patch_backends(monkeypatch)
+        bad_dir = tmp_path / "no_model"
+        bad_dir.mkdir()
+        monkeypatch.setattr(embedding, "_MODELS_DIR", bad_dir)
+        monkeypatch.setattr(embedding, "_onnx_unavailable_warned", False)
+        result = embedding.embed_query("test query", "cl-nagoya/ruri-v3-310m")
+        assert result == []
+
 
 class TestModelNotFound:
     """モデルファイル未展開時の動作テスト。"""
 
-    def test_missing_model_onnx_raises_file_not_found(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    def test_missing_model_onnx_returns_empty_list(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ):
-        """model.onnx が存在しない場合は FileNotFoundError。"""
+        """model.onnx が存在しない場合は例外を出さず空リストを返す（ONNX バックグラウンドビルド中）。"""
         _patch_backends(monkeypatch)
         bad_dir = tmp_path / "no_model"
         bad_dir.mkdir()
         (bad_dir / "tokenizer.json").write_bytes(b"{}")
         monkeypatch.setattr(embedding, "_MODELS_DIR", bad_dir)
-        with pytest.raises(FileNotFoundError, match="model.onnx"):
-            embedding.embed(["test"])
+        monkeypatch.setattr(embedding, "_onnx_unavailable_warned", False)
+        result = embedding.embed(["test"])
+        assert result == []
+        assert "onnx building" in capsys.readouterr().err
+
+    def test_missing_model_onnx_warns_only_once(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ):
+        """model.onnx が存在しない場合、警告は 1 度だけ出力される。"""
+        _patch_backends(monkeypatch)
+        bad_dir = tmp_path / "no_model"
+        bad_dir.mkdir()
+        (bad_dir / "tokenizer.json").write_bytes(b"{}")
+        monkeypatch.setattr(embedding, "_MODELS_DIR", bad_dir)
+        monkeypatch.setattr(embedding, "_onnx_unavailable_warned", False)
+        embedding.embed(["test"])
+        embedding.embed(["test2"])
+        err = capsys.readouterr().err
+        assert err.count("onnx building") == 1
 
     def test_missing_manifest_raises_file_not_found(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -213,7 +242,7 @@ class TestModelNotFound:
     def test_missing_tokenizer_raises_file_not_found(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
-        """tokenizer.json が存在しない場合は FileNotFoundError。"""
+        """tokenizer.json が存在しない場合は FileNotFoundError（model.onnx は存在する異常状態）。"""
         _patch_backends(monkeypatch)
         bad_dir = tmp_path / "no_tok"
         bad_dir.mkdir()

@@ -85,10 +85,10 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/devgear/launcher.py\" devgear.hooks.session_install",
-            "timeout": 1800
+            "timeout": 150
           }
         ],
-        "description": "プラグインバージョンが変わった場合のみ install.sh を実行して仮想環境を再構築する"
+        "description": "プラグイン初回/更新時の自動インストールと .venv symlink 修復（ONNX ビルドはバックグラウンド実行）"
       },
       {
         "matcher": "*",
