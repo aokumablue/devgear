@@ -11,7 +11,7 @@ NORMALIZED_ARGS=()
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/install-dev.sh [options]
+Usage: bash plugins/devgear/install-dev.sh [options]
 
 Options:
   --repo-root PATH   Repository root (default: script parent)

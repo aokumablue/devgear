@@ -21,7 +21,7 @@ NORMALIZED_ARGS=()
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/install.sh [options]
+Usage: bash plugins/devgear/install.sh [options]
 
 Options:
   --repo-root PATH   Repository root (default: script directory)
@@ -40,13 +40,14 @@ EOF
 run_quietly() {
   local output_file
   output_file="$(mktemp)"
-  # mktemp の一時ファイルをシェル終了・エラー時に確実削除する
-  trap 'rm -f "${output_file}"' RETURN
+  local status=0
   if "$@" >"${output_file}" 2>&1; then
+    rm -f "${output_file}"
     return 0
   else
-    local status=$?
+    status=$?
     cat "${output_file}" >&2
+    rm -f "${output_file}"
     return "${status}"
   fi
 }
@@ -203,9 +204,6 @@ install_user_python() {
   echo "[devgear] Installing Python package dependencies into ${VENV_DIR}"
   pip_install_quiet --upgrade pip wheel
 
-  # torch / sentence-transformers / transformers / huggingface_hub は ONNX 化により不要
-  # CVE-2025-32434（torch pickle RCE）攻撃面を根絶するため完全に排除する
-  #
   # ハッシュロックで PyPI レジストリ側改ざんを検知する（LS-1）。
   # 再生成: pip-compile --generate-hashes plugins/devgear/requirements.in -o plugins/devgear/requirements.txt
   run_quietly "${VENV_PYTHON}" -m pip install --no-input --quiet --disable-pip-version-check \
@@ -215,19 +213,11 @@ install_user_python() {
   # editable install は --require-hashes と排他のため別途実行する
   pip_install_quiet --no-deps -e "${REPO_ROOT}"
 
-  # ONNX モデルを sparse-checkout で取得し ~/.devgear/models/ に統合する
-  # 統合済み model.onnx が存在して SHA が一致する場合はスキップする
-  local sources_json="${SCRIPT_DIR}/model_sources.json"
+  # ONNX モデルが未生成の場合は HuggingFace から自前ビルドする（model.onnx 存在時はスキップ）
+  # shellcheck source=../../scripts/_build_onnx_lib.sh
+  source "${SCRIPT_DIR}/../../scripts/_build_onnx_lib.sh"
   local model_target="${HOME}/.devgear/models"
-  if [[ -f "${sources_json}" ]]; then
-    echo "[devgear] ONNX モデルを統合しています: ${model_target}"
-    "${VENV_PYTHON}" -m devgear.mem.model_assembler \
-      --sources "${sources_json}" \
-      --target "${model_target}"
-  else
-    echo "[devgear] Warning: ${sources_json} が見つかりません。モデル統合をスキップします。" >&2
-    echo "[devgear] scripts/build_onnx_model.sh を実行して model_sources.json を生成してください。" >&2
-  fi
+  build_onnx_if_missing "${REPO_ROOT}" "${model_target}" "fp16"
 
   # 既存 settings.json のセキュリティ移行（パスワード分離・sslmode 強制）
   if [[ -f "${SETTINGS_PATH}" ]]; then

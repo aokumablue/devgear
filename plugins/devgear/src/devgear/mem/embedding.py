@@ -2,7 +2,7 @@
 
 sentence-transformers / torch / transformers に依存しない。
 モデルは ~/.devgear/models/model.onnx を使用する。
-install.sh が model_assembler.py を呼び出して統合済みファイルを生成する。
+install.sh が python3 -m model_build build を実行してモデルを生成する。
 """
 
 from __future__ import annotations
@@ -16,10 +16,22 @@ from typing import Any
 from devgear.mem._paths import sha256_file as _sha256_file
 from devgear.mem._paths import validate_sha256_format as _validate_sha256_format
 from devgear.mem.logger import get as _get_logger
-from devgear.mem.model_assembler import _mean_pool_l2
 from devgear.mem.settings import _DEFAULT_EMBEDDING_MODEL, _DEFAULT_EMBEDDING_REVISION
 
 log = _get_logger("EMBEDDING")
+
+
+def _mean_pool_l2(token_embs: Any, attention_mask: Any) -> Any:
+    """mean pooling + L2 正規化を適用する（ruri-v3 仕様）。"""
+    import numpy as np  # type: ignore[import-untyped]
+
+    mask = attention_mask.astype(np.float32)[:, :, np.newaxis]
+    summed = (token_embs * mask).sum(axis=1)
+    counts = mask.sum(axis=1).clip(min=1e-9)
+    mean_vecs = summed / counts
+    norms = np.linalg.norm(mean_vecs, axis=1, keepdims=True).clip(min=1e-9)
+    return mean_vecs / norms
+
 
 # 統合済み model.onnx は ~/.devgear/models/ に格納（install.sh が配置）
 _MODELS_DIR = Path.home() / ".devgear" / "models"

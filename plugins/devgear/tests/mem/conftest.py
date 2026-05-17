@@ -12,7 +12,7 @@ from devgear.mem.database import MemoryChunk
 
 
 def pytest_collection_modifyitems(items: list) -> None:
-    """sqlite-vec / sentence-transformers が未インストールの場合はテストをスキップ"""
+    """sqlite-vec が未インストールの場合はテストをスキップ"""
     try:
         import sqlite_vec  # noqa: F401
 
@@ -20,30 +20,20 @@ def pytest_collection_modifyitems(items: list) -> None:
     except ImportError:
         has_sqlite_vec = False
 
-    try:
-        import sentence_transformers  # noqa: F401
-
-        has_sentence_transformers = True
-    except ImportError:
-        has_sentence_transformers = False
-
     skip_vec = pytest.mark.skip(reason="sqlite-vec not installed")
-    skip_st = pytest.mark.skip(reason="sentence-transformers not installed")
 
     for item in items:
         if "tests/mem" not in str(item.fspath):
             continue
-        # model_assembler / embedding / _paths / settings は sqlite-vec に依存しないのでスキップ除外
+        # embedding / _paths / settings は sqlite-vec に依存しないのでスキップ除外
         if item.fspath.basename in {
-            "test_model_assembler.py", "test_embedding_security.py", "test_embedding.py",
+            "test_embedding_security.py", "test_embedding.py",
             "test_paths.py", "test_settings.py", "test_settings_slim.py",
             "test_cli.py",
         }:
             continue
         if not has_sqlite_vec:
             item.add_marker(skip_vec)
-        elif not has_sentence_transformers:
-            item.add_marker(skip_st)
 
 
 def make_settings(tmp_path: Path, *, auto_compact_enabled: bool = True) -> SimpleNamespace:

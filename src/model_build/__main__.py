@@ -1,10 +1,9 @@
 """model_build CLI — `python3 -m model_build <subcommand>` で実行する。
 
 サブコマンド:
-  build    ONNX 変換 → 量子化 → 分割 → manifest 生成を一括実行
-  verify   manifest.json を使って分割済みモデルを検証
-  clean    output_dir の part ファイルと manifest を削除
-  sources  manifest.json + git HEAD から model_sources.json を生成
+  build    ONNX 変換 → 量子化 → manifest 生成を一括実行
+  verify   manifest.json を使ってモデルを検証
+  clean    output_dir のモデルファイルと manifest を削除
 """
 
 from __future__ import annotations
@@ -16,10 +15,8 @@ from pathlib import Path
 
 from model_build.quantize import DEFAULT_QUANT, QUANT_CHOICES
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUILD_CONFIG_PATH = Path(__file__).resolve().parent / "build_config.json"
-_DEFAULT_OUT = _REPO_ROOT / "assets" / "models"
-_DEFAULT_SOURCES_OUT = _REPO_ROOT / "plugins" / "devgear" / "model_sources.json"
+_DEFAULT_OUT = Path.home() / ".devgear" / "models"
 
 
 def _load_build_config() -> dict:
@@ -31,21 +28,6 @@ def _load_build_config() -> dict:
         if key not in config:
             raise ValueError(f"build_config.json に必須キーがありません: '{key}'")
     return config
-
-
-def _default_git_remote() -> str:
-    """現在のリポの git remote origin URL を取得する。失敗時はフォールバック値を返す。"""
-    import subprocess
-    try:
-        result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "git@github.com:aokumablue/devgear.git"
 
 
 def _cmd_build(args: argparse.Namespace) -> None:
@@ -115,7 +97,7 @@ def _cmd_verify(args: argparse.Namespace) -> None:
 def _cmd_clean(args: argparse.Namespace) -> None:
     """output_dir の part ファイルと manifest を削除する。
 
-    symlink は対象外（assets/models は実ファイル前提）。
+    symlink は対象外（生成済みファイルは実ファイル前提）。
     """
     output_dir: Path = args.out
     if not output_dir.exists():
@@ -130,83 +112,6 @@ def _cmd_clean(args: argparse.Namespace) -> None:
         manifest.unlink()
         removed += 1
     print(f"[clean] {removed} ファイルを削除しました: {output_dir}", flush=True)
-
-
-def _get_git_head() -> str:
-    """現在の git HEAD SHA を取得する（シェルインジェクション防止）。"""
-    import subprocess
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip()
-
-
-def _validate_fingerprint(value: str) -> str:
-    """GPG 鍵指紋が 40 桁大文字 hex であることを検証して返す。"""
-    import re
-    if not re.match(r"^[0-9A-F]{40}$", value.upper()):
-        raise argparse.ArgumentTypeError(f"signer-fingerprint は 40 桁大文字 hex が必要: '{value}'")
-    return value.upper()
-
-
-def _cmd_sources(args: argparse.Namespace) -> None:
-    """manifest.json + git HEAD から model_sources.json を生成する。
-
-    生成された JSON は install 時の git sparse-checkout 仕様として使用される。
-    git_commit は現在の HEAD をピン留めし、サプライチェーン攻撃に耐性を持つ。
-    signed_tag / signer_key_fingerprint で git tag 署名による信頼境界を確立する。
-    """
-    model_dir: Path = args.model_dir
-    out_path: Path = args.out
-    git_remote: str = args.git_remote
-    signed_tag: str = args.signed_tag
-    signer_fingerprint: str = args.signer_fingerprint
-
-    manifest_path = model_dir / "manifest.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"manifest.json が見つかりません: {manifest_path}")
-
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-
-    git_commit = _get_git_head()
-
-    # assets/models への sparse path（リポルートからの相対パス）
-    sparse_path = "assets/models"
-
-    import hashlib
-
-    # manifest.json 自身の SHA256 を計算して auxiliary_files に追加する（多層防御）
-    manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-    auxiliary_files = [
-        {"name": "manifest.json", "sha256": manifest_sha256},
-        *manifest["auxiliary_files"],
-    ]
-
-    sources = {
-        "schema_version": 1,
-        "model_name": manifest["model_name"],
-        "git_remote": git_remote,
-        "git_commit": git_commit,
-        "signed_tag": signed_tag,
-        "signer_key_fingerprint": signer_fingerprint,
-        "sparse_paths": [sparse_path],
-        "manifest_relpath": f"{sparse_path}/manifest.json",
-        "merged_sha256": manifest["merged_sha256"],
-        "parts": [
-            {"name": p["name"], "sha256": p["sha256"]}
-            for p in manifest["parts"]
-        ],
-        "auxiliary_files": auxiliary_files,
-    }
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(sources, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"[sources] 生成: {out_path}", flush=True)
-    print(f"[sources] git_commit: {git_commit}", flush=True)
-    print(f"[sources] signed_tag: {signed_tag}", flush=True)
 
 
 def main() -> None:
@@ -249,39 +154,6 @@ def main() -> None:
     p_clean = sub.add_parser("clean", help="生成済み part・manifest を削除")
     p_clean.add_argument("--out", type=Path, default=_DEFAULT_OUT, help="対象ディレクトリ")
 
-    # --- sources ---
-    p_sources = sub.add_parser("sources", help="manifest.json から model_sources.json を生成")
-    p_sources.add_argument(
-        "--model-dir",
-        type=Path,
-        default=_DEFAULT_OUT,
-        help="manifest.json が存在するディレクトリ",
-    )
-    p_sources.add_argument(
-        "--out",
-        type=Path,
-        default=_DEFAULT_SOURCES_OUT,
-        help="生成先 model_sources.json のパス",
-    )
-    p_sources.add_argument(
-        "--git-remote",
-        default=_default_git_remote(),
-        help="git remote URL (default: git remote get-url origin)",
-    )
-    p_sources.add_argument(
-        "--signed-tag",
-        required=True,
-        dest="signed_tag",
-        help="署名済み git tag 名 (例: models/a2f9ac6-fp16)",
-    )
-    p_sources.add_argument(
-        "--signer-fingerprint",
-        required=True,
-        dest="signer_fingerprint",
-        type=_validate_fingerprint,
-        help="署名者 GPG 鍵指紋 (40 桁大文字 hex)",
-    )
-
     args = parser.parse_args()
 
     try:
@@ -291,8 +163,6 @@ def main() -> None:
             _cmd_verify(args)
         elif args.command == "clean":
             _cmd_clean(args)
-        elif args.command == "sources":
-            _cmd_sources(args)
     except Exception as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         sys.exit(1)

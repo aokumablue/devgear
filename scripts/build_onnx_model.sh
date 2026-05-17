@@ -7,12 +7,12 @@
 #   ./scripts/build_onnx_model.sh --quant int8           # INT8（動的量子化、約 300 MB）
 #   ./scripts/build_onnx_model.sh --quant fp16 --revision <SHA>
 #
-# 出力先: assets/models/
+# 出力先: ~/.devgear/models/（install.sh と共有）
 # 使用する venv: .venv-modelbuild/（リポ管理外、このスクリプトが自動作成）
 #
 # 量子化方式:
 #   FP16: onnxruntime.transformers.optimizer を使用（CPU 対応）。約 600 MB。
-#   FP32: 量子化なし。品質劣化ゼロ。約 1.2 GB（GitHub 推奨 1GB 超）。
+#   FP32: 量子化なし。品質劣化ゼロ。約 1.2 GB。
 #   INT8: onnxruntime 動的量子化。約 300 MB。精度低下 < 0.5%（要検証）。
 
 set -euo pipefail
@@ -22,6 +22,7 @@ REPO_ROOT="${SCRIPT_DIR}/.."
 
 QUANT="fp16"
 REVISION=""
+OUT_DIR="${HOME}/.devgear/models"
 
 usage() {
   cat <<'EOF'
@@ -32,10 +33,9 @@ Options:
                             fp16: ort optimizer 経由（CPU 対応、約 600 MB）★推奨
                             fp32: 量子化なし（約 1.2 GB）
                             int8: 動的量子化（約 300 MB）
-  --revision SHA           HF Hub commit SHA (default: settings.py の _DEFAULT_EMBEDDING_REVISION)
+  --revision SHA           HF Hub commit SHA (default: build_config.json の hf_revision)
+  --out DIR                出力先ディレクトリ (default: ~/.devgear/models)
   --help                   このヘルプを表示
-
-出力先: assets/models/
 EOF
 }
 
@@ -51,6 +51,10 @@ while [[ $# -gt 0 ]]; do
         echo "Error: --revision は 40 または 64 文字の16進数 SHA を指定してください: '${REVISION}'" >&2
         exit 1
       fi
+      shift 2
+      ;;
+    --out)
+      OUT_DIR="$2"
       shift 2
       ;;
     --help)
@@ -73,68 +77,10 @@ case "${QUANT}" in
     ;;
 esac
 
-VENV_DIR="${REPO_ROOT}/.venv-modelbuild"
-VENV_PYTHON="${VENV_DIR}/bin/python3"
-SRC_DIR="${REPO_ROOT}/src"
-
 echo "[build] ONNX モデルビルドを開始します (quant=${QUANT})"
 echo "[build] リポジトリルート: ${REPO_ROOT}"
+echo "[build] 出力先: ${OUT_DIR}"
 
-# ---- メンテナ用 venv 作成 ----
-if [[ ! -x "${VENV_PYTHON}" ]]; then
-  echo "[build] メンテナ用 venv を作成しています: ${VENV_DIR}"
-  python3 -m venv "${VENV_DIR}"
-fi
-
-echo "[build] ビルド依存を venv にインストールしています..."
-"${VENV_PYTHON}" -m pip install --quiet --disable-pip-version-check --upgrade pip
-
-# ハッシュロックで依存パッケージのレジストリ側改ざんを検知する（LS-1）。
-# 再生成: pip-compile --generate-hashes scripts/requirements-build.in -o scripts/requirements-build.txt
-"${VENV_PYTHON}" -m pip install --quiet --disable-pip-version-check \
-  --require-hashes -r "${SCRIPT_DIR}/requirements-build.txt"
-
-# ---- model_build をビルド venv に追加 ----
-# sys.path に src/ を追加して直接実行（パッケージインストール不要）
-
-BUILD_ARGS=("--quant" "${QUANT}")
-if [[ -n "${REVISION}" ]]; then
-  BUILD_ARGS+=("--revision" "${REVISION}")
-fi
-
-echo "[build] ONNX ビルドを実行しています..."
-PYTHONPATH="${SRC_DIR}" "${VENV_PYTHON}" -m model_build build "${BUILD_ARGS[@]}"
-
-echo "[build] ビルド成果物を検証しています..."
-OUT_DIR="${REPO_ROOT}/assets/models"
-PYTHONPATH="${SRC_DIR}" "${VENV_PYTHON}" -m model_build verify --model-dir "${OUT_DIR}"
-
-echo "[build] model_sources.json を生成しています..."
-PYTHONPATH="${SRC_DIR}" "${VENV_PYTHON}" -m model_build sources \
-  --model-dir "${OUT_DIR}" \
-  --out "${REPO_ROOT}/plugins/devgear/model_sources.json"
-
-echo ""
-echo "[build] 完了。生成ファイル:"
-ls -lh "${OUT_DIR}"
-SHORT_SHA="$(git rev-parse --short=7 HEAD)"
-TAG_NAME="models/${SHORT_SHA}-${QUANT}"
-
-echo ""
-echo "[build] 次のステップ: 署名タグを作成してから model_sources.json を生成してください。"
-echo ""
-echo "  # 1. 生成ファイルを commit する（tag 前に commit が必要）"
-echo "  git add assets/models/"
-echo "  git commit -m 'chore: update ONNX model (${QUANT})'"
-echo ""
-echo "  # 2. 署名済み git tag を作成して push する"
-echo "  git tag -s ${TAG_NAME} -m 'Model build ${QUANT}'"
-echo "  git push origin ${TAG_NAME}"
-echo ""
-echo "  # 3. 署名者の GPG 指紋を確認する（gpg --list-keys で確認可）"
-echo "  # 4. model_sources.json を生成する"
-echo "  python3 -m model_build sources \\"
-echo "    --signed-tag ${TAG_NAME} \\"
-echo "    --signer-fingerprint <YOUR_40HEX_KEY_FINGERPRINT>"
-echo "  git add plugins/devgear/model_sources.json"
-echo "  git commit -m 'chore: update model_sources.json with signed tag ${TAG_NAME}'"
+# shellcheck source=_build_onnx_lib.sh
+source "${SCRIPT_DIR}/_build_onnx_lib.sh"
+build_onnx_always "${REPO_ROOT}" "${OUT_DIR}" "${QUANT}" "${REVISION}"

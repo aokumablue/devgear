@@ -95,8 +95,12 @@ def write_fake_python(path: Path, log_path: Path) -> None:
         '  echo "memsetup:${*:3}" >> "${LOG_PATH}"\n'
         "  exit 0\n"
         "fi\n"
-        'if [[ "${1:-}" == "-m" && "${2:-}" == "devgear.mem.model_assembler" ]]; then\n'
-        '  echo "model_assembler:${*:3}" >> "${LOG_PATH}"\n'
+        'if [[ "${1:-}" == "-m" && "${2:-}" == "model_build" && "${3:-}" == "build" ]]; then\n'
+        '  echo "model_build:${*:3}" >> "${LOG_PATH}"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "${1:-}" == "-m" && "${2:-}" == "model_build" && "${3:-}" == "verify" ]]; then\n'
+        '  echo "model_build:${*:3}" >> "${LOG_PATH}"\n'
         "  exit 0\n"
         "fi\n"
         'if [[ "${1:-}" == "-m" && "${2:-}" == "devgear.mem" && "${3:-}" == "migrate-settings" ]]; then\n'
@@ -126,27 +130,30 @@ def prepare_temp_repo(tmp_path: Path) -> Path:
     """テスト用の最小リポジトリ構造を tmp_path に構築して返す。"""
     repo = tmp_path / "repo"
     plugin_dir = repo / "plugins" / "devgear"
+    scripts_dir = repo / "scripts"
     plugin_dir.mkdir(parents=True)
+    scripts_dir.mkdir(parents=True)
     shutil.copy2(ROOT / "plugins" / "devgear" / "install.sh", plugin_dir / "install.sh")
     shutil.copy2(ROOT / "plugins" / "devgear" / "install-dev.sh", plugin_dir / "install-dev.sh")
     shutil.copy2(ROOT / "plugins" / "devgear" / "settings.json", plugin_dir / "settings.json")
     shutil.copy2(ROOT / "plugins" / "devgear" / "pyproject.toml", plugin_dir / "pyproject.toml")
+    shutil.copy2(ROOT / "scripts" / "_build_onnx_lib.sh", scripts_dir / "_build_onnx_lib.sh")
     return repo
 
 
 def test_install_script_is_user_facing_only() -> None:
-    """install.sh がユーザ向け処理のみを持ち、torch / sentence-transformers をインストールしないこと。"""
+    """install.sh がユーザ向け処理のみを持つこと。"""
     content = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
     assert 'exec "${SCRIPT_DIR}/install-dev.sh"' in content
-    assert "onnxruntime" in content
-    # pip install 引数として torch / sentence-transformers が渡されない
+    assert "requirements.txt" in content
+    assert "_build_onnx_lib.sh" in content
+    assert "build_onnx_if_missing" in content
     assert "pip_install_quiet 'torch" not in content
     assert "pip_install_quiet --index-url" not in content
     assert "pip_install_quiet 'sentence-transformers" not in content
     assert "pip_install_quiet 'huggingface_hub" not in content
     assert "prefetch_model" not in content
-    assert "psycopg[binary]" in content
     assert "ruff" not in content
     assert "vulture" not in content
 
@@ -155,11 +162,9 @@ def test_install_dev_script_contains_developer_extras() -> None:
     """install-dev.sh が install.sh を呼び出し、開発者向け依存を追加すること。"""
     content = INSTALL_DEV_SCRIPT.read_text(encoding="utf-8")
 
-    # ONNX 化により torch / sentence-transformers / prefetch_model は完全に消えていること
     assert "torch" not in content
     assert "sentence-transformers" not in content
     assert "prefetch_model" not in content
-    # psycopg はユーザ側 install.sh の責務
     assert "psycopg[binary]" not in content
     assert 'bash "${SCRIPT_DIR}/install.sh"' in content
     assert "[dev]" in content
@@ -257,17 +262,23 @@ def test_install_dev_script_runs_user_and_dev_steps(tmp_path: Path) -> None:
     log = log_path.read_text(encoding="utf-8")
     log_lines = log.splitlines()
     editable_idx = next(i for i, line in enumerate(log_lines) if "pip:install" in line and " -e " in line)
-    onnx_idx = next(i for i, line in enumerate(log_lines) if "onnxruntime" in line)
+    req_idx = next(i for i, line in enumerate(log_lines) if "requirements.txt" in line)
 
     assert "pip:install --no-input --quiet --disable-pip-version-check --upgrade pip wheel" in log
     assert " -e " in log
-    assert "onnxruntime" in log
-    assert "tokenizers" in log
+    assert "requirements.txt" in log
     assert "torch" not in log
     assert "sentence-transformers" not in log
-    assert onnx_idx < editable_idx
-    assert "psycopg[binary]" in log
+    assert req_idx < editable_idx
     assert "[dev]" in log
+    # model_build が build → verify の順で呼ばれることを検証（A-6）
+    build_idx = next(i for i, line in enumerate(log_lines) if "model_build:build" in line)
+    verify_idx = next(i for i, line in enumerate(log_lines) if "model_build:verify" in line)
+    assert build_idx < verify_idx
+    assert "model_build:build" in log
+    assert "--quant fp16" in log
+    assert "--out" in log
+    assert "model_build:verify --model-dir" in log
 
 
 def test_install_scripts_suppress_pip_noise(tmp_path: Path) -> None:
