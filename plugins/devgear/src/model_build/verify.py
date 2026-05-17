@@ -151,3 +151,29 @@ def _run_inference_check(
     _check_l2_norm(vectors)
     _check_reproducibility(session, tokenizer, test_texts[0], vectors[0], cosine_threshold)
     print("[verify] all verifications PASSED", flush=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI エントリポイント。--models-dir または DEVGEAR_MODELS_DIR 環境変数でパス上書き可能。"""
+    import argparse
+    import os
+    import sys
+    import traceback
+
+    parser = argparse.ArgumentParser(description="model.onnx 品質検証")
+    parser.add_argument(
+        "--models-dir",
+        type=Path,
+        default=Path(os.environ.get("DEVGEAR_MODELS_DIR", Path.home() / ".devgear" / "models")),
+    )
+    args = parser.parse_args(argv)
+    try:
+        verify(args.models_dir)
+        return 0
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

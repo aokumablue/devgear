@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -24,22 +25,56 @@ if TYPE_CHECKING:
 
 log = _get_logger("PG")
 
-# sslmode がこれらの値だと TLS が無効になる（フェイルクローズ対象）
-_INSECURE_SSL_MODES = frozenset({"disable", "allow", "prefer"})
+def _is_loopback(url: str) -> bool:
+    """URL のホストがローカルループバックか判定する。
+
+    localhost（名前解決前の文字列）・127.0.0.0/8・::1・
+    IPv4-mapped IPv6（::ffff:127.x.x.x）・Unix ソケットを許容する。
+    """
+    host = (urlparse(url).hostname or "").lower().rstrip(".")
+    if not host or host.startswith("/"):  # Unix socket
+        return True
+    if host == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        return ip.is_loopback
+    except ValueError:
+        return False
 
 
 def _ensure_ssl(url: str) -> str:
-    """URL に sslmode=require を強制付与する。
+    """URL に sslmode を適用する。
 
-    sslmode=disable/allow/prefer が明示されていた場合は ValueError を発生させる（フェイルクローズ）。
-    sslmode 未指定の場合は sslmode=require を自動付与する。
+    - ループバックホスト(localhost/127.0.0.1/::1) + sslmode=disable: 警告のみで許可
+      （SSL 非対応のローカル PG 向け開発用例外）
+    - sslmode=allow/prefer: ループバックでも拒否（中途半端な TLS は意味がない）
+    - sslmode 未指定: sslmode=require を自動付与
+    - sslmode=require: 警告を出して維持（verify-full 推奨）
+    - sslmode=verify-full: そのまま維持
+    - リモートホストで sslmode=disable: ValueError（フェイルクローズ）
     """
     parsed = urlparse(url)
     qs = parse_qs(parsed.query, keep_blank_values=True)
     existing = qs.get("sslmode", [])
     if existing:
         mode = existing[0].lower()
-        if mode in _INSECURE_SSL_MODES:
+        if mode == "disable":
+            if _is_loopback(url):
+                # ローカル開発環境: SSL 非対応 PG を許容
+                log.warning(
+                    "sslmode=disable はローカル接続(%s)のみ許可されます。"
+                    "本番環境では sslmode=require 以上を使用してください。",
+                    parsed.hostname,
+                )
+                return url
+            raise ValueError(
+                f"PostgreSQL URL に安全でない sslmode={mode!r} が指定されています。"
+                " sslmode=require 以上を使用してください。"
+            )
+        if mode in ("allow", "prefer"):
             raise ValueError(
                 f"PostgreSQL URL に安全でない sslmode={mode!r} が指定されています。"
                 " sslmode=require 以上を使用してください。"

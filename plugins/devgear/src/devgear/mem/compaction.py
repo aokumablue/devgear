@@ -125,12 +125,22 @@ def optimize_db(db: Database) -> dict:
     pages = db.conn.execute("PRAGMA page_count").fetchone()[0]
     fragmentation = free / pages if pages > 0 else 0
 
+    # FTS5 optimize や PRAGMA optimize がトランザクションを開始していることがあるため、
+    # VACUUM 実行前に commit して暗黙トランザクションを終了させる。
+    # SQLite は VACUUM をトランザクション外でのみ実行可能。
+    db.conn.commit()
+
+    vacuumed = False
     if fragmentation > 0.15:
-        db.conn.execute("VACUUM")
-        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        try:
+            db.conn.execute("VACUUM")
+            db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            vacuumed = True
+        except Exception as e:
+            log.warning("VACUUM スキップ: %s", e)
 
     db.conn.commit()
-    return {"fragmentation_before": fragmentation}
+    return {"fragmentation_before": fragmentation, "vacuumed": vacuumed}
 
 
 def memory_health_report(db: Database) -> dict:

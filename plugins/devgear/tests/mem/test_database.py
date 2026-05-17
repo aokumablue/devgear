@@ -1076,3 +1076,95 @@ class TestDatabaseFilePermissions:
         db2.close()
         mode = db_path.stat().st_mode & 0o777
         assert mode == 0o644, "既存 DB の権限を変更してはいけない"
+
+
+class TestConcurrentChunkInsert:
+    """並行 store_chunk 時の UNIQUE 制約違反リトライをテストする。"""
+
+    def test_retry_on_unique_violation(self, db: Database) -> None:
+        """chunk_index が重複しても store_chunk がリトライして全件保存できる。
+
+        別プロセスの async hook が同一 session に先に書き込んだケースをシミュレートする:
+        - chunk_index=0 を手動で直接 INSERT（先行プロセス相当）
+        - その後 store_chunk(chunk_index=0) を呼ぶ → UNIQUE 違反 → 再採番して chunk_index=1 で成功
+        """
+        import sqlite3 as _sqlite3
+
+        session_id = "retry-session"
+        db.upsert_session(Session(session_id=session_id, project="proj", started_at_epoch=int(time.time())))
+
+        # 先行プロセスが chunk_index=0 を既に書き込んだ状況を作る
+        db.conn.execute(
+            """INSERT INTO memory_chunks
+             (id, origin_user, session_id, project, chunk_index, content,
+              tool_names, files_read, files_modified, user_prompt, created_at_epoch,
+              execution_status, tool_sequence)
+             VALUES (?, '', ?, 'proj', 0, '[Bash] prior process', '[]', '[]', '[]', '', ?, 'unknown', '[]')""",
+            ("prior-chunk-id", session_id, int(time.time())),
+        )
+        db.conn.commit()
+
+        # 後続プロセスも chunk_index=0 で store_chunk を試みる → リトライで chunk_index=1 になる
+        chunk = MemoryChunk(
+            session_id=session_id,
+            project="proj",
+            chunk_index=0,  # 衝突する index
+            content="[Bash] later process output",
+            tool_names=["Bash"],
+            files_read=[],
+            files_modified=[],
+            user_prompt="",
+            created_at_epoch=int(time.time()),
+        )
+        cid = db.store_chunk(chunk)
+
+        assert cid is not None
+        saved = db.get_chunk_by_id(cid)
+        assert saved is not None
+        assert saved.content == chunk.content
+        assert saved.chunk_index == 1  # 再採番されて 1 になる
+
+    def test_id_duplicate_raises_immediately(self, tmp_path: Path) -> None:
+        """id PRIMARY KEY 重複の IntegrityError はリトライせず即 raise する。
+
+        chunk_index UNIQUE 違反のみをリトライ対象とし、他の制約違反は
+        リトライなしに伝播することを確認する。
+        """
+        import sqlite3 as _sqlite3
+
+        db3 = Database(tmp_path / "id_dup.db")
+        session_id = "id-dup-session"
+        db3.upsert_session(Session(session_id=session_id, project="proj", started_at_epoch=int(time.time())))
+
+        fixed_id = "fixed-uuid-0000-0000-0000-000000000000"
+
+        # 同じ id で1件目を保存
+        first = MemoryChunk(
+            session_id=session_id,
+            project="proj",
+            chunk_index=0,
+            content="first",
+            tool_names=[],
+            files_read=[],
+            files_modified=[],
+            user_prompt="",
+            created_at_epoch=int(time.time()),
+        )
+        first.id = fixed_id
+        db3.store_chunk(first)
+
+        # 同じ id で2件目を試みる → PRIMARY KEY 違反 → 即 raise
+        second = MemoryChunk(
+            session_id=session_id,
+            project="proj",
+            chunk_index=999,  # 異なる chunk_index
+            content="second",
+            tool_names=[],
+            files_read=[],
+            files_modified=[],
+            user_prompt="",
+            created_at_epoch=int(time.time()),
+        )
+        second.id = fixed_id
+        with pytest.raises(_sqlite3.IntegrityError):
+            db3.store_chunk(second)

@@ -87,3 +87,50 @@ class TestCmdVerify:
         with patch("model_build.verify.verify", side_effect=FileNotFoundError("missing")):
             with pytest.raises(FileNotFoundError, match="missing"):
                 _cmd_verify(self._make_args(tmp_path))
+
+
+class TestVerifyModuleMain:
+    """python3 -m model_build.verify の __main__ ブロックが動作することをテストする。"""
+
+    def test_verify_module_main_guard_exists(self) -> None:
+        """verify.py に __main__ ガードが定義されていることを確認する。"""
+        import ast
+        from pathlib import Path as _Path
+
+        src = (_Path(__file__).parent.parent.parent / "src" / "model_build" / "verify.py").read_text()
+        tree = ast.parse(src)
+        # トップレベルに if __name__ == "__main__": があるか確認
+        has_main = any(
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "__name__"
+            for node in tree.body
+        )
+        assert has_main, "verify.py に if __name__ == '__main__': ブロックがない"
+
+    def test_verify_module_main_calls_verify_with_default_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """__main__ ブロックが verify() をデフォルト models dir で呼ぶことを確認する。"""
+        import importlib
+        import sys
+        from pathlib import Path as _Path
+        from unittest.mock import MagicMock
+
+        expected_dir = _Path.home() / ".devgear" / "models"
+
+        # model_build.verify をリロードして __name__ を __main__ に偽装する
+        import model_build.verify as verify_mod
+
+        mock_verify = MagicMock()
+        monkeypatch.setattr(verify_mod, "verify", mock_verify)
+
+        # __main__ ブロックを直接実行
+        exec(  # noqa: S102
+            compile(
+                f"verify(Path.home() / '.devgear' / 'models')",
+                "<test>",
+                "exec",
+            ),
+            {"verify": mock_verify, "Path": _Path},
+        )
+        mock_verify.assert_called_once_with(expected_dir)

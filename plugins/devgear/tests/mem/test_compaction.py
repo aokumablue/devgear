@@ -321,6 +321,22 @@ class TestOptimizeDbVacuum:
             db.conn = original_conn
         assert result["fragmentation_before"] == pytest.approx(0.20)
 
+    def test_vacuum_succeeds_without_transaction_error(self, db: Database) -> None:
+        """断片化率が高い実 DB で VACUUM が "cannot VACUUM from within a transaction" を起こさない。"""
+        # 大量挿入 → 大半削除で断片化 15% 超を作る
+        for i in range(150):
+            db.store_chunk(_make_chunk(chunk_index=i, content="x" * 300))
+        db.conn.execute("DELETE FROM memory_chunks WHERE chunk_index < 130")
+        db.conn.commit()
+
+        free = db.conn.execute("PRAGMA freelist_count").fetchone()[0]
+        pages = db.conn.execute("PRAGMA page_count").fetchone()[0]
+        assert free / pages > 0.15, "前提条件: 断片化率が 15% を超えていること"
+
+        # OperationalError が発生しなければ OK
+        result = optimize_db(db)
+        assert result["fragmentation_before"] > 0.15
+
     def test_fts5_optimize_exception_is_ignored(self, db: Database) -> None:
         """FTS5 optimize が失敗しても optimize_db はクラッシュしない"""
         from unittest.mock import MagicMock

@@ -143,43 +143,77 @@ class Database:
     # --- チャンク ---
 
     def store_chunk(self, chunk: MemoryChunk) -> str:
-        """チャンクを保存し、生成された id を返す。セッションの chunk_count も同一トランザクションで更新。"""
+        """チャンクを保存し、生成された id を返す。セッションの chunk_count も同一トランザクションで更新。
+
+        並列の async hook が同一 session_id に同時挿入すると chunk_index の UNIQUE 制約に違反する。
+        UNIQUE 制約違反（chunk_index 競合）のみリトライ対象。最大3回（並列 hook 最大同時数 +1）。
+        PRIMARY KEY 違反等の他の IntegrityError は即 raise する。
+        """
         if not chunk.id:
             chunk.id = generate_uuid()
 
-        cur = self.conn.execute(
-            """INSERT INTO memory_chunks
-         (id, origin_user, session_id, project, chunk_index, content,
-          tool_names, files_read, files_modified,
-          user_prompt, created_at_epoch,
-          execution_status, tool_error, ai_response_summary, tool_sequence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         RETURNING id""",
-            (
-                chunk.id,
-                chunk.origin_user,
-                chunk.session_id,
-                chunk.project,
-                chunk.chunk_index,
-                chunk.content,
-                json.dumps(chunk.tool_names, ensure_ascii=False),
-                json.dumps(chunk.files_read, ensure_ascii=False),
-                json.dumps(chunk.files_modified, ensure_ascii=False),
-                chunk.user_prompt,
-                chunk.created_at_epoch,
-                chunk.execution_status,
-                chunk.tool_error,
-                chunk.ai_response_summary,
-                json.dumps(chunk.tool_sequence, ensure_ascii=False),
-            ),
-        )
-        row = cur.fetchone()
-        self.conn.execute(
-            "UPDATE sessions SET chunk_count = chunk_count + 1, synced_at = NULL WHERE session_id = ?",
-            (chunk.session_id,),
-        )
-        self.conn.commit()
-        return row["id"]
+        _MAX_RETRIES = 3
+        for attempt in range(_MAX_RETRIES):
+            try:
+                cur = self.conn.execute(
+                    """INSERT INTO memory_chunks
+             (id, origin_user, session_id, project, chunk_index, content,
+              tool_names, files_read, files_modified,
+              user_prompt, created_at_epoch,
+              execution_status, tool_error, ai_response_summary, tool_sequence)
+             VALUES (?, ?, ?,
+                     ?,
+                     COALESCE((SELECT MAX(chunk_index) + 1 FROM memory_chunks WHERE session_id = ?), 0),
+                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             RETURNING id, chunk_index""",
+                    (
+                        chunk.id,
+                        chunk.origin_user,
+                        chunk.session_id,
+                        chunk.project,
+                        chunk.session_id,  # サブクエリ用
+                        chunk.content,
+                        json.dumps(chunk.tool_names, ensure_ascii=False),
+                        json.dumps(chunk.files_read, ensure_ascii=False),
+                        json.dumps(chunk.files_modified, ensure_ascii=False),
+                        chunk.user_prompt,
+                        chunk.created_at_epoch,
+                        chunk.execution_status,
+                        chunk.tool_error,
+                        chunk.ai_response_summary,
+                        json.dumps(chunk.tool_sequence, ensure_ascii=False),
+                    ),
+                )
+                row = cur.fetchone()
+                chunk.chunk_index = row["chunk_index"]
+                self.conn.execute(
+                    "UPDATE sessions SET chunk_count = chunk_count + 1, synced_at = NULL WHERE session_id = ?",
+                    (chunk.session_id,),
+                )
+                self.conn.commit()
+                return row["id"]
+            except sqlite3.IntegrityError as e:
+                self.conn.rollback()
+                # chunk_index 競合（UNIQUE 制約）のみリトライ。PRIMARY KEY 等は即 raise。
+                if "chunk_index" not in str(e):
+                    raise
+                if attempt == _MAX_RETRIES - 1:
+                    log.error(
+                        "chunk_index 競合 %d/%d 回でも解消不能 session=%s: %s",
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        chunk.session_id,
+                        e,
+                    )
+                    raise
+                log.warning(
+                    "chunk_index 競合 attempt=%d/%d session=%s: %s",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    chunk.session_id,
+                    e,
+                )
+        raise AssertionError("unreachable: loop must return or raise")
 
     def get_chunks_by_session(self, session_id: str) -> list[MemoryChunk]:
         rows = self.conn.execute(

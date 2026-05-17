@@ -608,3 +608,43 @@ class TestEnsureSsl:
         result = _ensure_ssl("postgresql://user@host/db?application_name=test")
         assert "sslmode=require" in result
         assert "application_name=test" in result
+
+    # --- ローカルホスト例外 ---
+
+    def test_localhost_disable_allowed(self) -> None:
+        """localhost では sslmode=disable が許可される（SSL 非対応 PG 向け）。"""
+        url = "postgresql://user@localhost/db?sslmode=disable"
+        result = _ensure_ssl(url)
+        assert "sslmode=disable" in result
+
+    def test_127_0_0_1_disable_allowed(self) -> None:
+        """127.0.0.1 では sslmode=disable が許可される。"""
+        url = "postgresql://user@127.0.0.1/db?sslmode=disable"
+        result = _ensure_ssl(url)
+        assert "sslmode=disable" in result
+
+    def test_ipv6_loopback_disable_allowed(self) -> None:
+        """IPv6 ループバック (::1) では sslmode=disable が許可される。"""
+        url = "postgresql://user@[::1]/db?sslmode=disable"
+        result = _ensure_ssl(url)
+        assert "sslmode=disable" in result
+
+    def test_localhost_no_sslmode_adds_require(self) -> None:
+        """localhost でも sslmode 未指定なら sslmode=require を付与する。"""
+        result = _ensure_ssl("postgresql://user@localhost/db")
+        assert "sslmode=require" in result
+
+    def test_remote_host_disable_still_raises(self) -> None:
+        """リモートホストでは sslmode=disable は依然として ValueError。"""
+        with pytest.raises(ValueError, match="sslmode"):
+            _ensure_ssl("postgresql://user@remote.example.com/db?sslmode=disable")
+
+    def test_localhost_allow_still_raises(self) -> None:
+        """localhost でも sslmode=allow は許可しない（disable のみ例外）。"""
+        with pytest.raises(ValueError, match="sslmode"):
+            _ensure_ssl("postgresql://user@localhost/db?sslmode=allow")
+
+    def test_localhost_prefer_still_raises(self) -> None:
+        """localhost でも sslmode=prefer は許可しない（disable のみ例外）。"""
+        with pytest.raises(ValueError, match="sslmode"):
+            _ensure_ssl("postgresql://user@localhost/db?sslmode=prefer")
