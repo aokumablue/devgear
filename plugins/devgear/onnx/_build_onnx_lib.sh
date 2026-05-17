@@ -30,7 +30,7 @@ build_onnx_impl() {
   fi
 
   # ハッシュロックで PyPI レジストリ側改ざんを検知する（LS-1）
-  # 再生成: pip-compile --generate-hashes plugins/devgear/onnx/requirements-build.in -o plugins/devgear/onnx/requirements-build.txt
+  # 再生成: pip-compile --generate-hashes --allow-unsafe plugins/devgear/onnx/requirements-build.in -o plugins/devgear/onnx/requirements-build.txt
   # run_quietly が利用可能なら使用し、なければ直接実行する（build_onnx_model.sh から直接呼ばれる場合）
   if declare -f run_quietly >/dev/null 2>&1; then
     run_quietly "${build_python}" -m pip install --quiet --disable-pip-version-check --upgrade pip
