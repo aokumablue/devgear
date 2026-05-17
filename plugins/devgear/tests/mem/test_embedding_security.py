@@ -138,13 +138,13 @@ class TestModelPathValidation:
         self._patch_ort(monkeypatch)
         model_dir = tmp_path / "model"
         model_dir.mkdir()
-        part_data = b"fake"
+        model_data = b"fake"
         manifest = {
-            "merged_sha256": hashlib.sha256(part_data).hexdigest(),
-            "parts": [{"name": "model.onnx.part00", "size": 4, "sha256": hashlib.sha256(part_data).hexdigest()}],
+            "merged_sha256": hashlib.sha256(model_data).hexdigest(),
+            "auxiliary_files": [],
         }
         (model_dir / "manifest.json").write_text(_json.dumps(manifest), encoding="utf-8")
-        (model_dir / "model.onnx.part00").write_bytes(part_data)
+        (model_dir / "model.onnx").write_bytes(model_data)
         # tokenizer.json は作らない
         monkeypatch.setattr(embedding, "_MODELS_DIR", model_dir)
         with pytest.raises(FileNotFoundError, match="tokenizer.json"):

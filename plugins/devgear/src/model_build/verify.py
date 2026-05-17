@@ -1,9 +1,8 @@
-"""検証 — 分割済みモデルを統合復元して推論・品質チェックを実行する。"""
+"""検証 — model.onnx を読み込んで推論・品質チェックを実行する。"""
 
 from __future__ import annotations
 
 import hmac
-import io
 import json
 import math
 from pathlib import Path
@@ -11,12 +10,6 @@ from pathlib import Path
 from model_build._paths import safe_join as _safe_join
 from model_build._paths import sha256_file as _sha256_file
 from model_build._paths import validate_sha256_format as _validate_sha256_format
-
-
-def _sha256_bytes(data: bytes) -> str:
-    """バイト列の SHA256 ダイジェストを返す。"""
-    import hashlib
-    return hashlib.sha256(data).hexdigest()
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -50,9 +43,9 @@ def _infer_embedding(session: object, tokenizer: object, text: str) -> list[floa
 
 
 def verify(model_dir: Path, cosine_threshold: float = 0.999) -> None:
-    """manifest.json を読み込んで分割 part を検証し、推論で品質を確認する。
+    """manifest.json を読み込んで model.onnx を検証し、推論で品質を確認する。
 
-    cosine_threshold: 統合後と再統合後のベクトル間の最低類似度
+    cosine_threshold: 再推論間のベクトル最低 cosine 類似度
     """
     manifest_path = model_dir / "manifest.json"
     if not manifest_path.exists():
@@ -60,36 +53,19 @@ def verify(model_dir: Path, cosine_threshold: float = 0.999) -> None:
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    # 1. 各 part の SHA256 検証
-    buf = io.BytesIO()
-    for part_info in manifest["parts"]:
-        _validate_sha256_format(part_info["sha256"], part_info["name"])
-        part_path = _safe_join(model_dir, part_info["name"])
-        data = part_path.read_bytes()
-        actual = _sha256_bytes(data)
-        # H-2: タイミングアタック対策
-        if not hmac.compare_digest(actual, part_info["sha256"]):
-            raise ValueError(
-                f"SHA256 不一致: {part_info['name']}\n"
-                f"  expected: {part_info['sha256']}\n"
-                f"  actual:   {actual}"
-            )
-        buf.write(data)
-    print(f"[verify] {len(manifest['parts'])} 個の part SHA256 検証 OK", flush=True)
-
-    # 2. 統合後の SHA256 検証
-    merged_bytes = buf.getvalue()
+    # 1. model.onnx の SHA256 検証
+    model_path = _safe_join(model_dir, "model.onnx")
     _validate_sha256_format(manifest["merged_sha256"], "merged_sha256")
-    actual_merged = _sha256_bytes(merged_bytes)
-    if not hmac.compare_digest(actual_merged, manifest["merged_sha256"]):
+    actual = _sha256_file(model_path)
+    if not hmac.compare_digest(actual, manifest["merged_sha256"]):
         raise ValueError(
-            f"統合後 SHA256 不一致\n"
+            f"model.onnx SHA256 不一致\n"
             f"  expected: {manifest['merged_sha256']}\n"
-            f"  actual:   {actual_merged}"
+            f"  actual:   {actual}"
         )
-    print("[verify] 統合後 SHA256 検証 OK", flush=True)
+    print("[verify] model.onnx SHA256 検証 OK", flush=True)
 
-    # 3. 補助ファイルの SHA256 検証（ストリーミングで大ファイルに対応）
+    # 2. 補助ファイルの SHA256 検証
     for aux in manifest["auxiliary_files"]:
         _validate_sha256_format(aux["sha256"], aux["name"])
         aux_path = _safe_join(model_dir, aux["name"])
@@ -102,8 +78,9 @@ def verify(model_dir: Path, cosine_threshold: float = 0.999) -> None:
             )
     print("[verify] 補助ファイル SHA256 検証 OK", flush=True)
 
-    # 4. 推論テスト（onnxruntime + tokenizers）
-    _run_inference_check(merged_bytes, model_dir, manifest, cosine_threshold)
+    # 3. 推論テスト（onnxruntime + tokenizers）
+    model_bytes = model_path.read_bytes()
+    _run_inference_check(model_bytes, model_dir, manifest, cosine_threshold)
 
 
 def _check_dim(vectors: list[list[float]], dim: int) -> None:

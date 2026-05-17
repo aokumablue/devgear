@@ -84,7 +84,6 @@ def _write_fake_model_dir(model_dir: Path, model_data: bytes = b"fake-onnx") -> 
         "embedding_dim": 4,
         "tokenizer_max_length": 512,
         "merged_sha256": merged_sha,
-        "parts": [],
         "auxiliary_files": [{"name": "tokenizer.json", "sha256": tok_sha}],
     }
     (model_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

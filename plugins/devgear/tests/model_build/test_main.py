@@ -17,18 +17,21 @@ class TestCmdClean:
         """argparse.Namespace を返す。"""
         return argparse.Namespace(out=out)
 
-    def test_clean_removes_parts_and_manifest(self, tmp_path: Path) -> None:
-        """part ファイルと manifest.json が削除される。"""
-        for i in range(3):
-            (tmp_path / f"model.onnx.part{i:02d}").write_bytes(b"x")
+    def test_clean_removes_model_files_and_manifest(self, tmp_path: Path) -> None:
+        """model.onnx・tokenizer.json・config.json・manifest.json が削除される。"""
+        (tmp_path / "model.onnx").write_bytes(b"x")
+        (tmp_path / "tokenizer.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "config.json").write_text("{}", encoding="utf-8")
         (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
-        (tmp_path / "tokenizer.json").write_bytes(b"keep")  # 保持されるはず
+        (tmp_path / "other.txt").write_bytes(b"keep")  # 保持されるはず
 
         _cmd_clean(self._make_args(tmp_path))
 
-        assert not list(tmp_path.glob("model.onnx.part*"))
+        assert not (tmp_path / "model.onnx").exists()
+        assert not (tmp_path / "tokenizer.json").exists()
+        assert not (tmp_path / "config.json").exists()
         assert not (tmp_path / "manifest.json").exists()
-        assert (tmp_path / "tokenizer.json").exists()
+        assert (tmp_path / "other.txt").exists()
 
     def test_clean_empty_dir_succeeds(self, tmp_path: Path) -> None:
         """対象ファイルがなくてもエラーにならない。"""
@@ -36,7 +39,7 @@ class TestCmdClean:
 
     def test_clean_reports_count(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         """削除ファイル数を出力する。"""
-        (tmp_path / "model.onnx.part00").write_bytes(b"x")
+        (tmp_path / "model.onnx").write_bytes(b"x")
         (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
 
         _cmd_clean(self._make_args(tmp_path))
@@ -52,6 +55,18 @@ class TestCmdClean:
         _cmd_clean(self._make_args(nonexistent))
         captured = capsys.readouterr()
         assert "存在しません" in captured.out
+
+    def test_clean_skips_symlinks(self, tmp_path: Path) -> None:
+        """symlink は削除対象外。"""
+        real = tmp_path / "real.onnx"
+        real.write_bytes(b"x")
+        link = tmp_path / "model.onnx"
+        link.symlink_to(real)
+
+        _cmd_clean(self._make_args(tmp_path))
+
+        assert link.exists()  # symlink は残る
+        assert real.exists()
 
 
 class TestCmdVerify:

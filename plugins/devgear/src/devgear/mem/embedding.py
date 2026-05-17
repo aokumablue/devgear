@@ -52,7 +52,7 @@ def _verify_model_sha(models_dir: Path) -> None:
     """
     manifest_path = models_dir / "manifest.json"
     if not manifest_path.exists():
-        raise FileNotFoundError(f"manifest.json が見つかりません: {manifest_path}\nplugins/devgear/install.sh を実行してモデルを再統合してください。")
+        raise FileNotFoundError(f"manifest.json が見つかりません: {manifest_path}\nplugins/devgear/install.sh を実行してモデルをビルドしてください。")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     expected = manifest["merged_sha256"]
     _validate_sha256_format(expected, "merged_sha256")

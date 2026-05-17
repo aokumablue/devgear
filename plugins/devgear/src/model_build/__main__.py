@@ -31,12 +31,15 @@ def _load_build_config() -> dict:
 
 
 def _cmd_build(args: argparse.Namespace) -> None:
-    """ONNX 変換 → 量子化 → 分割 → manifest 生成を一括実行する。"""
+    """ONNX 変換 → 量子化 → manifest 生成を一括実行する。"""
+    import hashlib
+    import shutil
     import tempfile
+    from datetime import UTC, datetime
 
+    from model_build import __version__
     from model_build.export import export_to_onnx
     from model_build.quantize import quantize
-    from model_build.split import split
 
     build_cfg = _load_build_config()
     output_dir: Path = args.out
@@ -47,7 +50,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
 
         # Step 1: ONNX エクスポート（常に FP32 で取得し、後段で量子化）
         print(
-            f"[build] Step 1/3: ONNX エクスポート ({args.model}@{args.revision[:8]})",
+            f"[build] Step 1/2: ONNX エクスポート ({args.model}@{args.revision[:8]})",
             flush=True,
         )
         raw_onnx = export_to_onnx(
@@ -57,7 +60,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
         )
 
         # Step 2: 量子化（fp32: コピー、fp16: ort optimizer、int8: 動的量子化）
-        print(f"[build] Step 2/3: 量子化 ({quant})", flush=True)
+        print(f"[build] Step 2/2: 量子化 ({quant}) → {output_dir}", flush=True)
         quant_onnx = tmp_path / f"model_{quant}.onnx"
         quantize(raw_onnx, quant_onnx, quant, num_heads=build_cfg["num_heads"], hidden_size=build_cfg["hidden_size"])
 
@@ -70,19 +73,42 @@ def _cmd_build(args: argparse.Namespace) -> None:
         if not config_json.exists():
             raise FileNotFoundError(f"config.json が見つかりません: {config_json}")
 
-        # Step 3: 分割 + manifest 生成
-        print(f"[build] Step 3/3: 分割 → {output_dir}", flush=True)
-        split(
-            model_onnx=quant_onnx,
-            tokenizer_json=tokenizer_json,
-            config_json=config_json,
-            output_dir=output_dir,
-            model_name=args.model,
-            hf_revision=args.revision,
-            quant=quant,
-            embedding_dim=build_cfg["embedding_dim"],
-            tokenizer_max_length=build_cfg["tokenizer_max_length"],
-        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # model.onnx を出力先にコピー
+        dst_onnx = output_dir / "model.onnx"
+        shutil.copy2(quant_onnx, dst_onnx)
+
+        # tokenizer.json / config.json をコピーして SHA256 を計算
+        def _sha256(p: Path) -> str:
+            h = hashlib.sha256()
+            with p.open("rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            return h.hexdigest()
+
+        dst_tok = output_dir / "tokenizer.json"
+        dst_cfg = output_dir / "config.json"
+        shutil.copy2(tokenizer_json, dst_tok)
+        shutil.copy2(config_json, dst_cfg)
+
+        manifest = {
+            "model_name": args.model,
+            "hf_revision": args.revision,
+            "quantization": quant,
+            "embedding_dim": build_cfg["embedding_dim"],
+            "tokenizer_max_length": build_cfg["tokenizer_max_length"],
+            "merged_sha256": _sha256(dst_onnx),
+            "auxiliary_files": [
+                {"name": "tokenizer.json", "sha256": _sha256(dst_tok)},
+                {"name": "config.json", "sha256": _sha256(dst_cfg)},
+            ],
+            "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "tool_version": f"model_build/{__version__}",
+        }
+        manifest_path = output_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"[build] manifest: {manifest_path}", flush=True)
 
     print("[build] 完了", flush=True)
 
@@ -95,7 +121,7 @@ def _cmd_verify(args: argparse.Namespace) -> None:
 
 
 def _cmd_clean(args: argparse.Namespace) -> None:
-    """output_dir の part ファイルと manifest を削除する。
+    """output_dir のモデルファイルと manifest を削除する。
 
     symlink は対象外（生成済みファイルは実ファイル前提）。
     """
@@ -104,13 +130,11 @@ def _cmd_clean(args: argparse.Namespace) -> None:
         print(f"[clean] ディレクトリが存在しません: {output_dir}", flush=True)
         return
     removed = 0
-    for p in sorted(output_dir.glob("model.onnx.part*")):
-        p.unlink()
-        removed += 1
-    manifest = output_dir / "manifest.json"
-    if manifest.exists():
-        manifest.unlink()
-        removed += 1
+    for name in ("model.onnx", "tokenizer.json", "config.json", "manifest.json"):
+        p = output_dir / name
+        if p.exists() and not p.is_symlink():
+            p.unlink()
+            removed += 1
     print(f"[clean] {removed} ファイルを削除しました: {output_dir}", flush=True)
 
 
