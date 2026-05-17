@@ -214,10 +214,10 @@ install_user_python() {
   pip_install_quiet --no-deps -e "${REPO_ROOT}"
 
   # ONNX モデルが未生成の場合は HuggingFace から自前ビルドする（model.onnx 存在時はスキップ）
-  # shellcheck source=../../scripts/_build_onnx_lib.sh
-  source "${SCRIPT_DIR}/../../scripts/_build_onnx_lib.sh"
+  # shellcheck source=onnx/_build_onnx_lib.sh
+  source "${SCRIPT_DIR}/onnx/_build_onnx_lib.sh"
   local model_target="${HOME}/.devgear/models"
-  build_onnx_if_missing "${REPO_ROOT}" "${model_target}" "fp16"
+  build_onnx_if_missing "${model_target}" "fp16"
 
   # 既存 settings.json のセキュリティ移行（パスワード分離・sslmode 強制）
   if [[ -f "${SETTINGS_PATH}" ]]; then

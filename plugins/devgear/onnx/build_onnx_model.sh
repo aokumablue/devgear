@@ -2,10 +2,10 @@
 # build_onnx_model.sh — ruri-v3 ONNX ビルド・量子化・分割を 1 発で実行するメンテナ向けスクリプト。
 #
 # 使い方:
-#   ./scripts/build_onnx_model.sh                        # FP16 デフォルト（推奨）
-#   ./scripts/build_onnx_model.sh --quant fp32           # FP32（品質劣化ゼロ、約 1.2 GB）
-#   ./scripts/build_onnx_model.sh --quant int8           # INT8（動的量子化、約 300 MB）
-#   ./scripts/build_onnx_model.sh --quant fp16 --revision <SHA>
+#   ./plugins/devgear/onnx/build_onnx_model.sh                        # FP16 デフォルト（推奨）
+#   ./plugins/devgear/onnx/build_onnx_model.sh --quant fp32           # FP32（品質劣化ゼロ、約 1.2 GB）
+#   ./plugins/devgear/onnx/build_onnx_model.sh --quant int8           # INT8（動的量子化、約 300 MB）
+#   ./plugins/devgear/onnx/build_onnx_model.sh --quant fp16 --revision <SHA>
 #
 # 出力先: ~/.devgear/models/（install.sh と共有）
 # 使用する venv: .venv-modelbuild/（リポ管理外、このスクリプトが自動作成）
@@ -18,7 +18,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${SCRIPT_DIR}/.."
 
 QUANT="fp16"
 REVISION=""
@@ -26,7 +25,7 @@ OUT_DIR="${HOME}/.devgear/models"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/build_onnx_model.sh [options]
+Usage: ./plugins/devgear/onnx/build_onnx_model.sh [options]
 
 Options:
   --quant fp16|fp32|int8   量子化レベル (default: fp16)
@@ -78,9 +77,8 @@ case "${QUANT}" in
 esac
 
 echo "[build] ONNX モデルビルドを開始します (quant=${QUANT})"
-echo "[build] リポジトリルート: ${REPO_ROOT}"
 echo "[build] 出力先: ${OUT_DIR}"
 
 # shellcheck source=_build_onnx_lib.sh
 source "${SCRIPT_DIR}/_build_onnx_lib.sh"
-build_onnx_always "${REPO_ROOT}" "${OUT_DIR}" "${QUANT}" "${REVISION}"
+build_onnx_always "${OUT_DIR}" "${QUANT}" "${REVISION}"

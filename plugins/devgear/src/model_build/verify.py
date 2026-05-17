@@ -148,9 +148,10 @@ def _run_inference_check(
     cosine_threshold: float,
 ) -> None:
     """メモリ上の ONNX バイト列でサンプル推論を実行し、次元・正規化・再現性を検証する。"""
-    import onnx  # type: ignore[import-untyped]
     import onnxruntime as ort  # type: ignore[import-untyped]
     from tokenizers import Tokenizer  # type: ignore[import-untyped]
+
+    import onnx  # type: ignore[import-untyped]
 
     tokenizer = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
     tokenizer.enable_padding(pad_token="[PAD]", length=manifest["tokenizer_max_length"])

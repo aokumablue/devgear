@@ -130,14 +130,17 @@ def prepare_temp_repo(tmp_path: Path) -> Path:
     """テスト用の最小リポジトリ構造を tmp_path に構築して返す。"""
     repo = tmp_path / "repo"
     plugin_dir = repo / "plugins" / "devgear"
-    scripts_dir = repo / "scripts"
+    plugin_onnx_dir = plugin_dir / "onnx"
     plugin_dir.mkdir(parents=True)
-    scripts_dir.mkdir(parents=True)
+    plugin_onnx_dir.mkdir(parents=True)
     shutil.copy2(ROOT / "plugins" / "devgear" / "install.sh", plugin_dir / "install.sh")
     shutil.copy2(ROOT / "plugins" / "devgear" / "install-dev.sh", plugin_dir / "install-dev.sh")
     shutil.copy2(ROOT / "plugins" / "devgear" / "settings.json", plugin_dir / "settings.json")
     shutil.copy2(ROOT / "plugins" / "devgear" / "pyproject.toml", plugin_dir / "pyproject.toml")
-    shutil.copy2(ROOT / "scripts" / "_build_onnx_lib.sh", scripts_dir / "_build_onnx_lib.sh")
+    shutil.copy2(
+        ROOT / "plugins" / "devgear" / "onnx" / "_build_onnx_lib.sh",
+        plugin_onnx_dir / "_build_onnx_lib.sh",
+    )
     return repo
 
 

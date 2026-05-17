@@ -20,7 +20,6 @@ keywords = [
 dependencies = [
     "pydantic>=2.0",
     "onnxruntime>=1.18",
-    # ONNX モデル構造検証（InferenceSession 起動前の改ざん検知）
     "onnx>=1.16,<2",
     "tokenizers>=0.20",
     "sqlite-vec>=0.1",
@@ -54,7 +53,7 @@ build-backend = "hatchling.build"
 packages = ["src/devgear"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "../../tests/model_build"]
+testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
@@ -68,12 +67,9 @@ select = ["E", "F", "W", "I", "B", "C4", "UP"]
 ignore = ["E501"]
 
 [tool.coverage.run]
-source = ["src/devgear"]
+source = ["src/devgear", "src/model_build"]
 branch = true
 
-[tool.coverage.run.paths]
-# model_build は plugins/devgear 配下ではなく src/ 配下にある
-# テスト実行時は PYTHONPATH=../../src で追加する
 
 [tool.coverage.report]
 fail_under = 100
