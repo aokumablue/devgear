@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from devgear.lib.mem_helper import (
     _truncate,
     format_context_for_prompt,
@@ -238,22 +240,27 @@ class TestTruncate:
 class TestRunMemCliIntegration:
     """_run_mem_cli の統合テスト（実際のサブプロセスを使用した動作確認）"""
 
-    def test_invalid_command(self) -> None:
+    def test_invalid_command(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """無効なコマンドに対してエラーを返す"""
+        import os
+
         from devgear.lib.mem_helper import _run_mem_cli
 
+        monkeypatch.setitem(os.environ, "DEVGEAR_DATA_PATH", str(tmp_path))
         result = _run_mem_cli("invalid_command", {})
 
         # エラーが返されるか、空の結果が返される
         assert "error" in result or result == {}
 
-    def test_timeout_handling(self) -> None:
+    def test_timeout_handling(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """タイムアウト処理"""
+        import os
+
         from devgear.lib.mem_helper import _run_mem_cli
 
+        monkeypatch.setitem(os.environ, "DEVGEAR_DATA_PATH", str(tmp_path))
         # 正常なコマンドはタイムアウトしない
-        # (DBがなくてもエラーメッセージを返すはず)
-        result = _run_mem_cli("health", {})
+        result = _run_mem_cli("sync-status", {})
         # タイムアウトエラーではないことを確認
         assert result.get("error") != "Timeout"
 

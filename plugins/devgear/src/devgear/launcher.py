@@ -108,8 +108,6 @@ def main(argv: list[str] | None = None) -> int:
     if src_dir not in sys.path:
         sys.path.insert(0, src_dir)
 
-    from devgear.hooks.run_with_flags import read_raw_stdin_with_truncation
-
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         print("Usage: python3 src/devgear/launcher.py <module-or-script> [args...]", file=sys.stderr)
@@ -119,9 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     if sys.stdin.isatty():
         raw_input = ""
     else:
-        raw_input, truncated = read_raw_stdin_with_truncation()
-        if truncated:
-            sys.stderr.write("warning: stdin exceeded 1MB limit, input was truncated\n")
+        raw_input = sys.stdin.read()
 
     try:
         result = subprocess.run(

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
-_DEFAULT_DATA_DIR = Path.home() / ".devgear"
+_DEFAULT_DATA_DIR = Path(os.environ["DEVGEAR_DATA_PATH"]) if "DEVGEAR_DATA_PATH" in os.environ else Path.home() / ".devgear"
 _DEFAULT_EMBEDDING_MODEL = "cl-nagoya/ruri-v3-310m"
 # HF Hub commit SHA をピン留めし、サプライチェーン攻撃（名前空間再利用・改竄プッシュ）を防ぐ
 _DEFAULT_EMBEDDING_REVISION = "18b60fb8c2b9df296fb4212bb7d23ef94e579cd3"

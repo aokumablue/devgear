@@ -1168,3 +1168,57 @@ class TestConcurrentChunkInsert:
         second.id = fixed_id
         with pytest.raises(_sqlite3.IntegrityError):
             db3.store_chunk(second)
+
+    def test_max_retries_exceeded_raises(self, tmp_path: Path) -> None:
+        """_STORE_CHUNK_MAX_RETRIES 回全て UNIQUE 制約違反が続く場合は IntegrityError を raise する。
+
+        conn をラッパーで置き換え、INSERT が常に chunk_index UNIQUE 違反を返すようにする。
+        """
+        import sqlite3 as _sqlite3
+        import unittest.mock as mock
+
+        import devgear.mem.database as db_mod
+
+        db4 = Database(tmp_path / "max_retry.db")
+        session_id = "max-retry-session"
+        db4.upsert_session(Session(session_id=session_id, project="proj", started_at_epoch=int(time.time())))
+
+        chunk = MemoryChunk(
+            session_id=session_id,
+            project="proj",
+            chunk_index=0,
+            content="content",
+            tool_names=[],
+            files_read=[],
+            files_modified=[],
+            user_prompt="",
+            created_at_epoch=int(time.time()),
+        )
+
+        real_conn = db4.conn
+        unique_err = _sqlite3.IntegrityError(
+            "UNIQUE constraint failed: memory_chunks.session_id, memory_chunks.chunk_index"
+        )
+
+        class AlwaysFailConn:
+            """INSERT 時に常に chunk_index UNIQUE 違反を起こすラッパー。"""
+
+            def __getattr__(self, name: str):
+                return getattr(real_conn, name)
+
+            def execute(self, sql: str, params=()) -> object:
+                if "INSERT INTO memory_chunks" in sql:
+                    raise unique_err
+                return real_conn.execute(sql, params)
+
+            def rollback(self) -> None:
+                real_conn.rollback()
+
+        db4.conn = AlwaysFailConn()  # type: ignore[assignment]
+
+        with mock.patch.object(db_mod, "_STORE_CHUNK_MAX_RETRIES", 3):
+            with pytest.raises(_sqlite3.IntegrityError):
+                db4.store_chunk(chunk)
+
+        db4.conn = real_conn
+        db4.close()

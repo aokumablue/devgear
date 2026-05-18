@@ -17,12 +17,10 @@ import devgear.launcher as launcher
 class FakeStdin:
     """stdin の代替オブジェクト。"""
 
-    def __init__(self, tty: bool, data: str, *, use_buffer: bool = False) -> None:
+    def __init__(self, tty: bool, data: str) -> None:
         self._tty = tty
         self._data = data
         self.read_called = False
-        if use_buffer:
-            self.buffer = io.BytesIO(data.encode("utf-8"))
 
     def isatty(self) -> bool:
         return self._tty
@@ -41,17 +39,16 @@ def _create_repo_venv(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize(
-    ("tty", "expected_input", "should_read", "use_buffer"),
+    ("tty", "expected_input", "should_read"),
     [
-        (True, "", False, False),
-        (False, "payload", True, False),
-        (False, "payload", True, True),
+        (True, "", False),
+        (False, "payload", True),
     ],
 )
 def test_main_reads_stdin_only_when_piped(
-    monkeypatch, capsys, tty: bool, expected_input: str, should_read: bool, use_buffer: bool
+    monkeypatch, capsys, tty: bool, expected_input: str, should_read: bool
 ) -> None:
-    fake_stdin = FakeStdin(tty, "payload", use_buffer=use_buffer)
+    fake_stdin = FakeStdin(tty, "payload")
     captured = {}
 
     monkeypatch.setattr(launcher.sys, "stdin", fake_stdin)
@@ -68,22 +65,6 @@ def test_main_reads_stdin_only_when_piped(
     assert result == 0
     assert captured.get("input", "") == expected_input
     assert capsys.readouterr().out == "ok"
-
-
-def test_main_warns_on_stdin_truncation(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    from devgear.hooks.hook_common import MAX_STDIN_BYTES
-
-    large_data = "x" * (MAX_STDIN_BYTES + 1)
-    fake_stdin = FakeStdin(False, large_data, use_buffer=True)
-
-    monkeypatch.setattr(launcher.sys, "stdin", fake_stdin)
-    monkeypatch.setattr(launcher, "build_env", lambda: {})
-    monkeypatch.setattr(launcher.subprocess, "run", lambda *a, **kw: SimpleNamespace(stdout="", stderr="", returncode=0))
-
-    result = launcher.main(["dummy-target"])
-
-    assert result == 0
-    assert "truncated" in capsys.readouterr().err
 
 
 def test_main_does_not_echo_piped_input_when_subprocess_is_silent(monkeypatch, capsys) -> None:

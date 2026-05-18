@@ -1,6 +1,7 @@
 ---
 name: s-adr
 description: セッション中アーキテクチャ決定→構造化ADR記録。決定瞬間を自動検出、コンテキスト/代替案/根拠を記録。ADRログでコードベース形成理由を共有。
+context: fork
 ---
 
 # アーキテクチャ決定記録
@@ -61,13 +62,6 @@ docs/adr/
 ## ADRライフサイクル
 
 `proposed → accepted → [deprecated | superseded by ADR-NNNN]`
-
-## 良いADR要素
-
-- 具体的に（「ORM使う」より「Prisma使う」）
-- 却下した代替案を含める
-- 2分で読める長さ
-- 現在形を使う
 
 ## 永続メモリ
 

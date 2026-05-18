@@ -1,6 +1,7 @@
 ---
 name: s-checkpoint
 description: 長い反復ループの進捗をディスクに保存し、中断後の再開を高速化する。レート制限中断が多いセッションや10ステップ超の反復ループで使用。
+context: fork
 ---
 
 # チェックポイント保存・再開スキル
@@ -66,6 +67,3 @@ completed: false
 1. `~/.devgear/session-data/checkpoint-*.md` で `completed: false` のファイルを検索
 2. 最新のものを読み込み、「進行中」ステップから作業を再開する
 
-## セッション開始時の自動注入
-
-`session_start.py` は `completed: false` の最新チェックポイントを自動的にコンテキストへ注入する（1000文字以内に切り詰め）。前セッションの進捗を引き継ぐための基盤として機能する。

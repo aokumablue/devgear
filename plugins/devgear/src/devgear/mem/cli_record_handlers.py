@@ -221,7 +221,7 @@ def handle_record_item_run(
         item_type = stdin_data.get("item_type", "skill")
 
     if not skill_name:
-        log.warning("record-item-run: skill_name が未指定")
+        # Agent ツール呼び出し等、スキル以外の Skill マッチャー発火時はスキップ
         return
 
     if item_type not in ("skill", "command", "agent"):

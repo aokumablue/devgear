@@ -64,40 +64,15 @@ devgear_run devgear.skills.learn.cli <subcommand>
 /c-instinct evolve
 ```
 
-**実施内容:**
+**実施内容:** プロジェクトコンテキスト検出→project/globalインスティンクト読込（ID衝突時はproject優先）→パターン分類→候補特定→`evolved/{skills,commands,agents}/` 配下にファイル生成
 
-1. 現在のプロジェクトコンテキスト検出
-2. project / global のインスティンクト読む（ID衝突時はproject優先）
-3. トリガー/ドメインパターンごとに分類
-4. Skill候補（2件以上同パターンクラスタ）・Command候補・Agent候補を特定
-5. 昇格候補（project→global）を提示
-6. `evolved/{skills,commands,agents}/` 配下にファイル生成
+**進化ルール:** Command=ユーザー明示呼び出し / Skill=自動発火パターン / Agent=複雑多段階処理
 
-**進化ルール（3分類）:**
+**生成ファイルフロントマター:** `name` / `description` / `evolved_from: [{instinct-ids}]`
 
-- **Command** — ユーザーが明示的に呼び出す操作・繰り返し可能な手順・ユーザー入力が不可欠
-- **Skill** — 自動発火する振る舞い・パターンマッチ型トリガー・背後で隠れた効率化
-- **Agent** — 複雑な多段階処理・複数の独立した検証が必要・分離の恩恵が大きい
+## プロンプト推論（サブコマンド自動判定）
 
-**生成ファイルフロントマター形式:**
-
-```yaml
----
-name: {name}
-description: {description}
-evolved_from: [{instinct-ids}]
----
-```
-
-## 自然言語指示
-
-サブコマンドの代わりに自然言語で指示してもよい。例:
-
-- 「インスティンクトを書き出して」→ export 相当
-- 「team.yaml を取り込んで」→ import 相当
-- 「昇格できるものを全部昇格して」→ promote 相当
-- 「古いインスティンクトを整理して」→ prune 相当
-- 「インスティンクトからスキルを生成して」→ evolve 相当
+明示サブコマンドなし → プロンプト本文からキーワード照合（書き出/エクスポート→export、取り込/インポート→import、昇格/グローバル化→promote、整理/削除/古い→prune、進化/生成/スキル化→evolve）。推論結果は実行前に1行表示。複数一致/該当なし → `s-grillme` 起動。明示サブコマンドがあれば推論スキップ。
 
 ## 永続メモリ
 

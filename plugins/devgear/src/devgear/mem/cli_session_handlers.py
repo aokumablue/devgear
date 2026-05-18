@@ -128,11 +128,10 @@ def handle_observe(
 
     try:
         with open_db(settings) as db:
-            chunk_index = db.get_next_chunk_index(session_id)
             chunk = build_chunk_from_tool_use(
                 session_id=session_id,
                 project=project,
-                chunk_index=chunk_index,
+                chunk_index=0,  # store_chunk が MAX+1 で自動採番するため不要
                 user_prompt=user_prompt,
                 tool_name=tool_name,
                 tool_input=tool_input,

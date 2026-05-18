@@ -34,7 +34,8 @@ from devgear.mem.schema import _FTS5_SQL, _MIGRATIONS, _SCHEMA_SQL, _VEC_SQL
 
 log = _get_logger("DB")
 
-
+# 並列 async hook 競合時の chunk_index リトライ上限。テストからパッチ可能なモジュール定数。
+_STORE_CHUNK_MAX_RETRIES = 5
 
 
 def _make_prompt_hash(prompt: str) -> str:
@@ -146,14 +147,15 @@ class Database:
         """チャンクを保存し、生成された id を返す。セッションの chunk_count も同一トランザクションで更新。
 
         並列の async hook が同一 session_id に同時挿入すると chunk_index の UNIQUE 制約に違反する。
-        UNIQUE 制約違反（chunk_index 競合）のみリトライ対象。最大3回（並列 hook 最大同時数 +1）。
+        UNIQUE 制約違反（chunk_index 競合）のみリトライ対象。上限は _STORE_CHUNK_MAX_RETRIES。
         PRIMARY KEY 違反等の他の IntegrityError は即 raise する。
         """
         if not chunk.id:
             chunk.id = generate_uuid()
 
-        _MAX_RETRIES = 3
-        for attempt in range(_MAX_RETRIES):
+        import sys
+        max_retries = sys.modules[__name__]._STORE_CHUNK_MAX_RETRIES
+        for attempt in range(max_retries):
             try:
                 cur = self.conn.execute(
                     """INSERT INTO memory_chunks
@@ -197,11 +199,11 @@ class Database:
                 # chunk_index 競合（UNIQUE 制約）のみリトライ。PRIMARY KEY 等は即 raise。
                 if "chunk_index" not in str(e):
                     raise
-                if attempt == _MAX_RETRIES - 1:
+                if attempt == max_retries - 1:
                     log.error(
                         "chunk_index 競合 %d/%d 回でも解消不能 session=%s: %s",
                         attempt + 1,
-                        _MAX_RETRIES,
+                        max_retries,
                         chunk.session_id,
                         e,
                     )
@@ -209,11 +211,11 @@ class Database:
                 log.warning(
                     "chunk_index 競合 attempt=%d/%d session=%s: %s",
                     attempt + 1,
-                    _MAX_RETRIES,
+                    max_retries,
                     chunk.session_id,
                     e,
                 )
-        raise AssertionError("unreachable: loop must return or raise")
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def get_chunks_by_session(self, session_id: str) -> list[MemoryChunk]:
         rows = self.conn.execute(
