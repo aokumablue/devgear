@@ -210,12 +210,16 @@ PY
 
 install_user_python() {
   # 旧パス（REPO_ROOT/.venv）に実体 venv が残っていれば削除する
-  if [[ -d "${_LEGACY_VENV}/bin" && -f "${_LEGACY_VENV}/pyvenv.cfg" ]]; then
+  # シンボリックリンクを先に判定し、正しいリンクは触らない
+  if [[ -L "${_LEGACY_VENV}" ]]; then
+    if [[ "$(readlink "${_LEGACY_VENV}")" != "${VENV_DIR}" ]]; then
+      # VENV_DIR 以外を指す stale symlink のみ削除
+      echo "[devgear] Removing stale symlink at ${_LEGACY_VENV}"
+      rm -f -- "${_LEGACY_VENV}"
+    fi
+  elif [[ -d "${_LEGACY_VENV}/bin" && -f "${_LEGACY_VENV}/pyvenv.cfg" ]]; then
     echo "[devgear] Removing legacy venv at ${_LEGACY_VENV} (migrated to ${VENV_DIR})"
     rm -rf -- "${_LEGACY_VENV}"
-  elif [[ -L "${_LEGACY_VENV}" ]]; then
-    echo "[devgear] Removing stale symlink at ${_LEGACY_VENV}"
-    rm -f -- "${_LEGACY_VENV}"
   fi
 
   check_and_reset_venv
@@ -272,9 +276,10 @@ install_user_python() {
 # venv 実体は ~/.devgear/.venv に一元化したため、キャッシュ内の旧実体 venv もレガシーとして削除する。
 _replace_with_symlink() {
   local target_venv="$1"
+  local quiet="${2:-0}"
   # 既に正しいリンクが張られている場合はスキップ
   if [[ -L "${target_venv}" && "$(readlink "${target_venv}")" == "${VENV_DIR}" ]]; then
-    echo "[devgear] .venv already linked: ${target_venv}"
+    [[ "${quiet}" != "1" ]] && echo "[devgear] .venv already linked (skipping): ${target_venv} -> ${VENV_DIR}"
     return 0
   fi
   # キャッシュ内の旧実体 venv は削除して symlink に置換する
@@ -295,13 +300,26 @@ _replace_with_symlink() {
 update_claude_cache_symlinks() {
   [[ -d "${HOME}/.claude/plugins/cache/devgear" ]] || return 0
 
+  # 現バージョンを取得（plugin.json が読めない場合は空文字 → 全バージョン静音なし）
+  local current_ver=""
+  if [[ -f "${SCRIPT_DIR}/.claude-plugin/plugin.json" ]]; then
+    current_ver="$(${PYTHON3} - "${SCRIPT_DIR}/.claude-plugin/plugin.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1]))["version"])
+PY
+)"
+  fi
+
   for org_dir in "${HOME}/.claude/plugins/cache/devgear"/*; do
     [[ -L "${org_dir}" ]] && continue
     [[ -d "${org_dir}" ]] || continue
     for ver_dir in "${org_dir}"/*; do
       [[ -L "${ver_dir}" ]] && continue
       [[ -d "${ver_dir}" ]] || continue
-      _replace_with_symlink "${ver_dir}/.venv"
+      # 現バージョン以外の already linked ログは出力しない
+      local is_current=0
+      [[ -n "${current_ver}" && "$(basename "${ver_dir}")" == "${current_ver}" ]] && is_current=1
+      _replace_with_symlink "${ver_dir}/.venv" "$((1 - is_current))"
     done
   done
 }
