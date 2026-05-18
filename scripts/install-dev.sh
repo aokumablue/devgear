@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # install-dev.sh
-# install.sh を先に実行し、その後に開発者向け依存を追加する。
+# 開発者向け依存を追加する。事前に install.sh を実行しておくこと。
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
 SKIP_PYTHON="${DEVGEAR_INSTALL_SKIP_PYTHON:-0}"
-NORMALIZED_ARGS=()
 
 usage() {
   cat <<'EOF'
-Usage: bash plugins/devgear/install-dev.sh [options]
+Usage: bash scripts/install-dev.sh [options]
+
+Run bash scripts/install.sh first, then run this script.
 
 Options:
   --repo-root PATH   Repository root (default: script parent)
@@ -44,12 +45,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-root)
       REPO_ROOT="$2"
-      NORMALIZED_ARGS+=("--repo-root" "$2")
       shift 2
       ;;
     --skip-python)
       SKIP_PYTHON=1
-      NORMALIZED_ARGS+=("--skip-python")
       shift
       ;;
     --help)
@@ -67,10 +66,6 @@ done
 
 VENV_DIR="${HOME}/.devgear/.venv"
 VENV_PYTHON="${VENV_DIR}/bin/python3"
-
-# ---- ユーザ向けインストール（前提条件チェックを含む） ----
-
-bash "${SCRIPT_DIR}/install.sh" "${NORMALIZED_ARGS[@]}"
 
 # ---- 開発者向け追加インストール ----
 

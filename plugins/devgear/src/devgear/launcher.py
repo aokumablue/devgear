@@ -8,8 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from devgear.hooks.run_with_flags import read_raw_stdin_with_truncation
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -105,6 +103,13 @@ def main(argv: list[str] | None = None) -> int:
     Raises:
         例外はキャッチされ、エラーメッセージとして出力されます。
     """
+    # PYTHONPATH 未設定時の自己解決（launcher.py はサブプロセスに PYTHONPATH を渡すが自身には未設定のため）
+    src_dir = str(REPO_ROOT / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+
+    from devgear.hooks.run_with_flags import read_raw_stdin_with_truncation
+
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         print("Usage: python3 src/devgear/launcher.py <module-or-script> [args...]", file=sys.stderr)

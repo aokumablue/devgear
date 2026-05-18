@@ -14,11 +14,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
 SKIP_PYTHON="${DEVGEAR_INSTALL_SKIP_PYTHON:-0}"
-INSTALL_DEV="${DEVGEAR_INSTALL_DEV:-0}"
 # sudo インストールの明示オプトイン（DEVGEAR_INSTALL_ASSUME_YES=1 または --assume-yes）
 ASSUME_YES="${DEVGEAR_INSTALL_ASSUME_YES:-0}"
-# --dev を除く引数を install-dev.sh へ転送するために正規化して保持する
-NORMALIZED_ARGS=()
 
 usage() {
   cat <<'EOF'
@@ -27,13 +24,11 @@ Usage: bash plugins/devgear/install.sh [options]
 Options:
   --repo-root PATH   Repository root (default: script directory)
   --skip-python      Skip Python package installation and venv setup
-  --dev              Run the developer installer instead of the user installer
   --assume-yes       Allow sudo package installation without confirmation
   --help             Show this help
 
 Environment:
   DEVGEAR_INSTALL_SKIP_PYTHON=1  Skip Python package installation and venv setup
-  DEVGEAR_INSTALL_DEV=1          Run the developer installer instead of the user installer
   DEVGEAR_INSTALL_ASSUME_YES=1   Allow sudo package installation without confirmation
 EOF
 }
@@ -338,17 +333,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-root)
       REPO_ROOT="$2"
-      NORMALIZED_ARGS+=("--repo-root" "$2")
       shift 2
       ;;
     --skip-python)
       SKIP_PYTHON=1
-      NORMALIZED_ARGS+=("--skip-python")
-      shift
-      ;;
-    --dev)
-      INSTALL_DEV=1
-      # --dev は install-dev.sh へ転送しない（再帰呼び出し防止）
       shift
       ;;
     --assume-yes)
@@ -392,10 +380,6 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 # ---- メイン処理 ----
-
-if [[ "${INSTALL_DEV}" == "1" ]]; then
-  exec "${SCRIPT_DIR}/install-dev.sh" "${NORMALIZED_ARGS[@]}"
-fi
 
 ensure_settings_json
 
