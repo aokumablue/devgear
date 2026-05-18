@@ -22,64 +22,33 @@ devgear_run devgear.skills.learn.cli <subcommand>
 ## サブコマンド
 
 ### export
-
 全インスティンクトをYAML形式でstdoutに出力する。
 
-```bash
-/c-instinct export
-```
-
-### import
-
-ローカルファイルまたはURLから全インスティンクトを取り込む。確認なしで即時適用する。
-
-```bash
-/c-instinct import team-instincts.yaml
-/c-instinct import https://github.com/org/repo/instincts.yaml
-```
+### import `<file-or-url>`
+ローカルファイルまたはURLから取り込む。確認なしで即時適用。
 
 ### promote
-
-昇格条件を満たす全候補をprojectスコープからglobalスコープへ自動昇格する。
-
-昇格条件: 2プロジェクト以上に出現・信頼度しきい値を満たす。
-
-```bash
-/c-instinct promote
-```
+昇格条件（2プロジェクト以上に出現・信頼度しきい値を満たす）の全候補を project → global へ自動昇格。
 
 ### prune
-
-30日より古い未レビュー・未昇格の保留インスティンクトを削除する。
-
-```bash
-/c-instinct prune
-```
+30日より古い未レビュー・未昇格の保留インスティンクトを削除。
 
 ### evolve
+蓄積インスティンクトからスキル・コマンド・エージェント候補を検出し `evolved/{skills,commands,agents}/` 配下にファイル生成。
 
-蓄積されたインスティンクトからスキル・コマンド・エージェント候補を検出し、ファイルを生成する。
-
-```bash
-/c-instinct evolve
-```
-
-**実施内容:** プロジェクトコンテキスト検出→project/globalインスティンクト読込（ID衝突時はproject優先）→パターン分類→候補特定→`evolved/{skills,commands,agents}/` 配下にファイル生成
-
-**進化ルール:** Command=ユーザー明示呼び出し / Skill=自動発火パターン / Agent=複雑多段階処理
-
-**生成ファイルフロントマター:** `name` / `description` / `evolved_from: [{instinct-ids}]`
+- プロジェクトコンテキスト検出 → project/global インスティンクト読込（ID衝突時は project 優先）→ パターン分類 → 候補特定 → ファイル生成
+- 進化ルール: Command=ユーザー明示呼び出し / Skill=自動発火パターン / Agent=複雑多段階処理
+- 生成ファイルフロントマター: `name` / `description` / `evolved_from: [{instinct-ids}]`
 
 ## プロンプト推論（サブコマンド自動判定）
 
-明示サブコマンドなし → プロンプト本文からキーワード照合（書き出/エクスポート→export、取り込/インポート→import、昇格/グローバル化→promote、整理/削除/古い→prune、進化/生成/スキル化→evolve）。推論結果は実行前に1行表示。複数一致/該当なし → `s-grillme` 起動。明示サブコマンドがあれば推論スキップ。
+明示サブコマンドなし → キーワード照合（書き出/エクスポート→export、取り込/インポート→import、昇格/グローバル化→promote、整理/削除→prune、進化/生成/スキル化→evolve）。推論結果は実行前に1行表示。複数一致/該当なし → `s-grillme` 起動。
 
 ## 永続メモリ
 
 search: `instinct applied used`
 record: `{"event_type": "instinct-{action}", "content": "{summary}"}`
 record (evolve): `{"event_type": "evolve", "content": "Evolved: X skills, Y commands, Z agents from N instincts"}`
-参照: 進化決定履歴 / クラスタリングルール / 昇格成功率
 
 ## 引数
 

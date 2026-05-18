@@ -6,7 +6,7 @@ command: /c-skillgen
 
 # スキル生成入力収集
 
-リポジトリ固有入力を集めて整理し、SKILL.md生成はs-skillmakeに、生成後の改善はs-skilltuneに委譲。
+リポジトリ固有入力を集めて整理し、SKILL.md生成は s-skillmake に、生成後の改善は s-skilltune に委譲。
 
 ## s-grillme 強制起動（必須）
 
@@ -33,35 +33,28 @@ devgear_mem_search "<search query>" 3
 
 ### ステップ2: パターン検出
 
-- コミット規約: コミットメッセージ正規表現（feat:, fix:, chore:）
-- ファイル同時変更: 常に一緒に変更されるファイル
-- ワークフロー連続パターン: 繰り返しファイル変更パターン
-- アーキテクチャ: フォルダ構造と命名規則
-- テストパターン: テストファイルの場所・命名・カバレッジ
+コミット規約（feat:/fix:/chore:）・ファイル同時変更パターン・繰り返しワークフロー・フォルダ構造/命名規則・テストパターン
 
-### ステップ3: s-skillmake呼び出し
+### ステップ3: s-skillmake 呼び出し → SKILL.md 生成
 
-整理した入力を渡すとSKILL.md生成。
+### ステップ4: s-skilltune 呼び出し
 
-### ステップ4: s-skilltune呼び出し
+empirical 評価と反復改善。収束（連続2回で新規不明瞭点ゼロ）を確認してから次へ進む。
 
-生成されたSKILL.mdをs-skilltuneに渡し、empirical評価と反復改善を実施。
-収束（連続2回で新規不明瞭点ゼロ）を確認してから次ステップへ進む。
+### ステップ5: インスティンクト生成（--instincts 時）
 
-### ステップ5: インスティンクト生成（--instincts時）
+s-learn 連携用インスティンクトも同流れで生成。
 
-s-learn連携用インスティンクトも同流れで生成。
+## 役割分担
 
-## 関連スキルの役割分担
-
-| ステップ | 担当スキル | 役割 |
+| ステップ | 担当 | 役割 |
 |---|---|---|
-| 入力収集 | c-skillgen（本コマンド） | リポジトリ分析・パターン検出 |
-| SKILL.md生成 | s-skillmake | 下書き作成・構造化 |
-| 品質改善 | s-skilltune | empirical評価・反復改善 |
+| 入力収集 | c-skillgen | リポジトリ分析・パターン検出 |
+| SKILL.md 生成 | s-skillmake | 下書き作成・構造化 |
+| 品質改善 | s-skilltune | empirical 評価・反復改善 |
 
 ## 関連
 
 - `/c-instinct import` — 生成インスティンクトをインポート
-- `/c-dashboard` — 学習済みインスティンクトや成長候補の可視化
-- `/c-instinct evolve` — インスティンクトをskills/agentsにクラスタリング
+- `/c-dashboard` — 成長候補の可視化
+- `/c-instinct evolve` — インスティンクトを skills/agents にクラスタリング
