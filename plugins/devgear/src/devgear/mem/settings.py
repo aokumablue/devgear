@@ -266,9 +266,27 @@ class Settings:
 
         mem_raw = raw.get("mem", {})
         sync_raw = mem_raw.get("sync", {}) if isinstance(mem_raw, dict) else {}
+        postgres_url = str(sync_raw.get("postgres_url", "") or "")
+        # ロード時にパスワード付き URL を検出したら即座に分離し、settings.json を書き戻す。
+        # これによりユーザが手動でパスワード付き URL を書いた場合も次回コマンド実行時に自動で除去される。
+        if postgres_url:
+            stripped = _strip_password_to_pgpass(postgres_url)
+            if stripped != postgres_url:
+                import logging as _logging
+                _logging.getLogger("SETTINGS").info(
+                    "postgres_url からパスワードを ~/.pgpass に自動移行しました"
+                )
+                postgres_url = stripped
+                # settings.json の該当キーのみ書き戻す（他セクションは保持）
+                raw.setdefault("mem", {}).setdefault("sync", {})["postgres_url"] = postgres_url
+                tmp_path = path.with_suffix(".json.tmp")
+                tmp_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+                tmp_path.replace(path)
+                path.chmod(0o600)
+
         sync_settings = SyncSettings(
             enabled=bool(sync_raw.get("enabled", False)),
-            postgres_url=str(sync_raw.get("postgres_url", "") or ""),
+            postgres_url=postgres_url,
         )
 
         settings = cls(sync=sync_settings)

@@ -470,3 +470,69 @@ class TestStripPasswordToPgpass:
         mode = pgpass.stat().st_mode & 0o777
         assert mode == 0o600
         assert "secret" in pgpass.read_text()
+
+
+class TestLoadAutoStripPassword:
+    """Settings.load() によるパスワード自動分離のテスト。"""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+    def test_load_strips_password_and_rewrites_settings(self, tmp_path: Path) -> None:
+        """パスワード付き URL を settings.json に書いた場合、load() 時に自動分離される。"""
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(
+            json.dumps({"mem": {"sync": {"enabled": True, "postgres_url": "postgres://alice:secret@db.example:5432/mydb"}}})
+        )
+        s = Settings.load(settings_path=settings_file)
+
+        # インメモリのURLからパスワードが除去されている
+        assert "secret" not in s.sync.postgres_url
+        assert s.sync.postgres_url == "postgres://alice@db.example:5432/mydb"
+
+        # settings.json が書き戻されパスワードが除去されている
+        raw = json.loads(settings_file.read_text())
+        assert "secret" not in raw["mem"]["sync"]["postgres_url"]
+
+        # ~/.pgpass にパスワードが移動している
+        pgpass = tmp_path / ".pgpass"
+        assert pgpass.exists()
+        assert "secret" in pgpass.read_text()
+
+    def test_load_preserves_other_sections_when_stripping(self, tmp_path: Path) -> None:
+        """パスワード分離の書き戻し時に他プラグインのセクションが保持される。"""
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(
+            json.dumps({
+                "other_plugin": {"key": "value"},
+                "mem": {"sync": {"enabled": True, "postgres_url": "postgres://u:pw@h:5432/db"}},
+            })
+        )
+        Settings.load(settings_path=settings_file)
+
+        raw = json.loads(settings_file.read_text())
+        assert raw["other_plugin"]["key"] == "value"
+
+    def test_load_no_password_no_rewrite(self, tmp_path: Path) -> None:
+        """パスワードのない URL では settings.json を書き戻さない。"""
+        settings_file = tmp_path / "settings.json"
+        original = json.dumps({"mem": {"sync": {"enabled": True, "postgres_url": "postgres://alice@db.example:5432/mydb"}}})
+        settings_file.write_text(original)
+        mtime_before = settings_file.stat().st_mtime_ns
+
+        Settings.load(settings_path=settings_file)
+
+        # ファイルが更新されていない
+        assert settings_file.stat().st_mtime_ns == mtime_before
+
+    def test_load_settings_file_chmod_after_strip(self, tmp_path: Path) -> None:
+        """パスワード分離後の settings.json は 0600 になる。"""
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(
+            json.dumps({"mem": {"sync": {"enabled": True, "postgres_url": "postgres://u:pw@h:5432/db"}}})
+        )
+        Settings.load(settings_path=settings_file)
+
+        mode = settings_file.stat().st_mode & 0o777
+        assert mode == 0o600
