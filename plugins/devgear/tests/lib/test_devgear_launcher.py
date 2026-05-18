@@ -17,17 +17,19 @@ import devgear.launcher as launcher
 class FakeStdin:
     """stdin の代替オブジェクト。"""
 
-    def __init__(self, tty: bool, data: str) -> None:
+    def __init__(self, tty: bool, data: str, *, use_buffer: bool = False) -> None:
         self._tty = tty
         self._data = data
         self.read_called = False
+        if use_buffer:
+            self.buffer = io.BytesIO(data.encode("utf-8"))
 
     def isatty(self) -> bool:
         return self._tty
 
-    def read(self) -> str:
+    def read(self, n: int = -1) -> str:
         self.read_called = True
-        return self._data
+        return self._data[:n] if n >= 0 else self._data
 
 
 def _create_repo_venv(tmp_path: Path) -> Path:
@@ -39,16 +41,17 @@ def _create_repo_venv(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize(
-    ("tty", "expected_input", "should_read"),
+    ("tty", "expected_input", "should_read", "use_buffer"),
     [
-        (True, "", False),
-        (False, "payload", True),
+        (True, "", False, False),
+        (False, "payload", True, False),
+        (False, "payload", True, True),
     ],
 )
 def test_main_reads_stdin_only_when_piped(
-    monkeypatch, capsys, tty: bool, expected_input: str, should_read: bool
+    monkeypatch, capsys, tty: bool, expected_input: str, should_read: bool, use_buffer: bool
 ) -> None:
-    fake_stdin = FakeStdin(tty, "payload")
+    fake_stdin = FakeStdin(tty, "payload", use_buffer=use_buffer)
     captured = {}
 
     monkeypatch.setattr(launcher.sys, "stdin", fake_stdin)
@@ -63,9 +66,24 @@ def test_main_reads_stdin_only_when_piped(
     result = launcher.main(["dummy-target"])
 
     assert result == 0
-    assert fake_stdin.read_called is should_read
-    assert captured["input"] == expected_input
+    assert captured.get("input", "") == expected_input
     assert capsys.readouterr().out == "ok"
+
+
+def test_main_warns_on_stdin_truncation(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from devgear.hooks.hook_common import MAX_STDIN_BYTES
+
+    large_data = "x" * (MAX_STDIN_BYTES + 1)
+    fake_stdin = FakeStdin(False, large_data, use_buffer=True)
+
+    monkeypatch.setattr(launcher.sys, "stdin", fake_stdin)
+    monkeypatch.setattr(launcher, "build_env", lambda: {})
+    monkeypatch.setattr(launcher.subprocess, "run", lambda *a, **kw: SimpleNamespace(stdout="", stderr="", returncode=0))
+
+    result = launcher.main(["dummy-target"])
+
+    assert result == 0
+    assert "truncated" in capsys.readouterr().err
 
 
 def test_main_does_not_echo_piped_input_when_subprocess_is_silent(monkeypatch, capsys) -> None:
@@ -187,7 +205,7 @@ def test_main_covers_usage_stderr_and_entrypoint(
         captured["stderr"] = "child stderr"
         return SimpleNamespace(stdout="child stdout", stderr="child stderr", returncode=7)
 
-    monkeypatch.setattr(launcher.sys, "stdin", SimpleNamespace(isatty=lambda: False, read=lambda: "payload"))
+    monkeypatch.setattr(launcher.sys, "stdin", SimpleNamespace(isatty=lambda: False, read=lambda n=-1: "payload"))
     monkeypatch.setattr(launcher, "build_env", lambda: {})
     monkeypatch.setattr(launcher.subprocess, "run", fake_run)
 
@@ -199,7 +217,7 @@ def test_main_covers_usage_stderr_and_entrypoint(
 
 
 def test_main_handles_oserror_and_entrypoint(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(launcher.sys, "stdin", SimpleNamespace(isatty=lambda: False, read=lambda: "payload"))
+    monkeypatch.setattr(launcher.sys, "stdin", SimpleNamespace(isatty=lambda: False, read=lambda n=-1: "payload"))
     monkeypatch.setattr(launcher, "build_env", lambda: {})
     monkeypatch.setattr(launcher.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("boom")))
 

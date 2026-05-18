@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from devgear.hooks.run_with_flags import read_raw_stdin_with_truncation
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -109,7 +111,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     target, target_args = args[0], args[1:]
-    raw_input = "" if sys.stdin.isatty() else sys.stdin.read()
+    if sys.stdin.isatty():
+        raw_input = ""
+    else:
+        raw_input, truncated = read_raw_stdin_with_truncation()
+        if truncated:
+            sys.stderr.write("warning: stdin exceeded 1MB limit, input was truncated\n")
 
     try:
         result = subprocess.run(
