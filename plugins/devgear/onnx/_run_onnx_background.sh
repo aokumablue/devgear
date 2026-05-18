@@ -14,8 +14,8 @@ MODEL_TARGET="${HOME}/.devgear/models"
 # ~/.devgear とログディレクトリを事前確認（env -i で HOME が汚染されていないか検証）
 mkdir -p "${HOME}/.devgear" "${LOG_DIR}"
 chmod 0700 "${HOME}/.devgear"
-
 # ログファイルが 10MB 超なら truncate（無制限肥大化の防止）
+
 if [[ -f "${LOG_FILE}" ]] && \
    [[ $(stat -c%s "${LOG_FILE}" 2>/dev/null || stat -f%z "${LOG_FILE}" 2>/dev/null || echo 0) -gt 10485760 ]]; then
   : > "${LOG_FILE}"

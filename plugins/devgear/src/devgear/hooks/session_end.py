@@ -376,8 +376,7 @@ def main() -> int:
 
     try:
         raw = read_raw_stdin()
-        output = run(raw)
-        print(output, end="")
+        run(raw)
         return 0
     except Exception as err:
         log(f"[SessionEnd] Error: {err}")

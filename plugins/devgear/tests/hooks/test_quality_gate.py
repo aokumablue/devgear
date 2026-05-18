@@ -65,9 +65,8 @@ def test_quality_gate_runs_configured_step_and_preserves_input(
     _patch_preset(monkeypatch, preset)
 
     raw_input = json.dumps({"tool_input": {"file_path": "src/example.ts"}})
-    output = quality_gate.run(raw_input, action="post-edit")
+    quality_gate.run(raw_input, action="post-edit")
 
-    assert output == raw_input
     assert marker.read_text(encoding="utf-8") == "ran"
 
 
@@ -102,9 +101,8 @@ def test_quality_gate_skips_non_matching_file_extension(
     _patch_preset(monkeypatch, preset)
 
     raw_input = json.dumps({"tool_input": {"file_path": "src/example.py"}})
-    output = quality_gate.run(raw_input, action="post-edit")
+    quality_gate.run(raw_input, action="post-edit")
 
-    assert output == raw_input
     assert not marker.exists()
 
 
@@ -128,9 +126,8 @@ def test_quality_gate_skips_when_preset_is_empty(
     monkeypatch.setattr(quality_gate, "run_step", fake_run_step)
 
     raw_input = json.dumps({"tool_input": {"file_path": "src/example.py"}})
-    output = quality_gate.run(raw_input, action="post-edit")
+    quality_gate.run(raw_input, action="post-edit")
 
-    assert output == raw_input
     assert steps_executed == []
 
 
@@ -178,9 +175,8 @@ def test_quality_gate_expands_step_env_before_argv(
     _patch_preset(monkeypatch, preset)
 
     raw_input = json.dumps({"tool_input": {"file_path": "src/example.ts"}})
-    output = quality_gate.run(raw_input, action="post-edit")
+    quality_gate.run(raw_input, action="post-edit")
 
-    assert output == raw_input
     assert marker.read_text(encoding="utf-8") == "hello"
 
 
@@ -205,9 +201,8 @@ def test_quality_gate_does_not_run_linter_when_rule_has_no_steps(
     monkeypatch.setattr(quality_gate, "exec_command", fake_exec_command)
 
     raw_input = json.dumps({"tool_input": {"file_path": str(py_file)}})
-    output = quality_gate.run(raw_input, action="post-edit")
+    quality_gate.run(raw_input, action="post-edit")
 
-    assert output == raw_input
     assert calls == []
 
 
@@ -229,9 +224,8 @@ def test_quality_gate_no_fallback_when_rules_empty(
     monkeypatch.setattr(quality_gate, "exec_command", fake_exec_command)
 
     raw_input = json.dumps({"tool_input": {"file_path": str(py_file)}})
-    output = quality_gate.run(raw_input, action="post-edit")
+    quality_gate.run(raw_input, action="post-edit")
 
-    assert output == raw_input
     assert calls == []
 
 
@@ -267,9 +261,8 @@ def test_quality_gate_uses_language_preset(
     monkeypatch.setattr(quality_gate, "run_step", fake_run_step)
 
     raw_input = json.dumps({"tool_input": {"file_path": "src/example.py"}})
-    output = quality_gate.run(raw_input, action="post-edit")
+    quality_gate.run(raw_input, action="post-edit")
 
-    assert output == raw_input
     assert len(steps_executed) == 1
     assert steps_executed[0].get("argv") == ["ruff", "check", "src", "tests"]
 
@@ -331,9 +324,10 @@ def test_quality_gate_run_step_builds_command_env_and_timeout(
     assert captured["input"] == "payload"
     assert captured["cwd"] == str(tmp_path / "nested")
     assert captured["timeout"] == 30.0
-    assert captured["env"]["EXTRA"] == "/home/tester"
-    assert captured["env"]["CLAUDE_PLUGIN_ROOT"] == str(quality_gate.PLUGIN_ROOT)
-    assert captured["env"]["PYTHONPATH"].startswith(str(quality_gate.PLUGIN_ROOT / "src"))
+    captured_env: dict[str, str] = captured["env"]  # type: ignore[assignment]
+    assert captured_env["EXTRA"] == "/home/tester"
+    assert captured_env["CLAUDE_PLUGIN_ROOT"] == str(quality_gate.PLUGIN_ROOT)
+    assert captured_env["PYTHONPATH"].startswith(str(quality_gate.PLUGIN_ROOT / "src"))
 
 
 def test_quality_gate_run_step_rejects_cwd_outside_project_root(
@@ -495,10 +489,11 @@ def test_quality_gate_main_success_and_exception_paths(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(quality_gate, "read_raw_stdin", lambda: "payload")
-    monkeypatch.setattr(quality_gate, "run", lambda raw, action="post-edit": raw + "-out")
+    monkeypatch.setattr(quality_gate, "run", lambda raw, action="post-edit": None)
 
     assert quality_gate.main(["post-edit"]) == 0
-    assert capsys.readouterr().out == "payload-out"
+    # quality_gate は PostToolUse フックのため stdout は出さない
+    assert capsys.readouterr().out == ""
 
     logs: list[str] = []
     monkeypatch.setattr(quality_gate, "log", logs.append)
@@ -506,11 +501,6 @@ def test_quality_gate_main_success_and_exception_paths(
         quality_gate,
         "run",
         lambda raw, action="post-edit": (_ for _ in ()).throw(RuntimeError("boom")),
-    )
-    monkeypatch.setattr(
-        quality_gate,
-        "write_stdout",
-        lambda text: (_ for _ in ()).throw(RuntimeError("write failed")),
     )
 
     assert quality_gate.main(["post-edit"]) == 0

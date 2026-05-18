@@ -358,7 +358,6 @@ def main() -> int:
     try:
         raw = read_raw_stdin()
         result = evaluate(raw)
-        print(result["output"], end="")
         return result["exitCode"]
     except Exception:
         return 0

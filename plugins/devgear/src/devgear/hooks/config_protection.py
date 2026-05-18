@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from devgear.hooks.hook_common import basename, parse_json_object, read_raw_stdin, write_stderr, write_stdout
+from devgear.hooks.hook_common import basename, parse_json_object, read_raw_stdin, write_stderr
 
 PROTECTED_FILES = {
     ".eslintrc",
@@ -93,7 +93,6 @@ def main() -> int:
                 write_stderr(blocked_message_for_file(file_name) + "\n")
                 return 2
 
-    write_stdout(raw)
     return 0
 
 

@@ -8,11 +8,11 @@
 
 from __future__ import annotations
 
-from devgear.hooks.hook_common import read_raw_stdin, write_stdout
+from devgear.hooks.hook_common import read_raw_stdin
 
 
 def main() -> int:
-    """セッション終了時のマーカーとして標準入力を標準出力に転送する。
+    """セッション終了時のマーカーとして標準入力を読み捨てる。
 
     Args:
         引数はありません（標準入力から読み取る）。
@@ -23,7 +23,7 @@ def main() -> int:
     Raises:
         例外は発生しません。
     """
-    write_stdout(read_raw_stdin())
+    read_raw_stdin()
     return 0
 
 

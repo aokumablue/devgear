@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from devgear.hooks.hook_common import parse_json_object, read_raw_stdin, write_stderr, write_stdout
+from devgear.hooks.hook_common import parse_json_object, read_raw_stdin, write_stderr
 
 NO_VERIFY_RE = re.compile(r"\bgit\s+(commit|push)\b.*?(--no-verify|-n)\b", re.IGNORECASE)
 
@@ -36,7 +36,6 @@ def main() -> int:
             write_stderr("[Hook] BLOCKED: git hook bypass flags are not allowed\n")
             return 2
 
-    write_stdout(raw)
     return 0
 
 

@@ -22,17 +22,16 @@ from devgear.hooks import run_with_flags as run_with_flags
 from devgear.hooks import session_start as session_start
 
 
-def test_run_with_flags_echoes_payload_when_not_enough_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: list[str] = []
+def test_run_with_flags_reports_error_when_not_enough_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_stderr: list[str] = []
     monkeypatch.setattr(run_with_flags.sys, "argv", ["launcher.py", "hook-only"])
-    monkeypatch.setattr(run_with_flags, "read_raw_stdin_with_truncation", lambda max_bytes=0: ("payload", False))
-    monkeypatch.setattr(run_with_flags, "write_stdout", captured.append)
+    monkeypatch.setattr(run_with_flags, "write_stderr", captured_stderr.append)
 
-    assert run_with_flags.main() == 0
-    assert captured == ["payload"]
+    assert run_with_flags.main() == 1
+    assert any("引数が不足" in msg for msg in captured_stderr)
 
 
-def test_run_with_flags_builds_env_and_falls_back_to_raw_stdout(
+def test_run_with_flags_builds_env_and_emits_no_stdout_on_empty_child_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stdout: list[str] = []
@@ -61,7 +60,7 @@ def test_run_with_flags_builds_env_and_falls_back_to_raw_stdout(
     monkeypatch.setattr(run_with_flags, "write_stderr", stderr.append)
 
     assert run_with_flags.main() == 0
-    assert stdout == ["payload"]
+    assert stdout == []
     assert stderr == ["child stderr"]
     assert captured["input"] == "payload"
     assert captured["command"] == [sys.executable, "-m", "target", "alpha"]
@@ -73,18 +72,15 @@ def test_run_with_flags_builds_env_and_falls_back_to_raw_stdout(
 
 
 def test_run_with_flags_reports_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
-    stdout: list[str] = []
     stderr: list[str] = []
 
     monkeypatch.setattr(run_with_flags.sys, "argv", ["launcher.py", "hook-id", "target"])
     monkeypatch.setattr(run_with_flags, "read_raw_stdin_with_truncation", lambda max_bytes=0: ("payload", False))
     monkeypatch.setattr(run_with_flags, "is_hook_enabled", lambda hook_id, profiles=None: True)
     monkeypatch.setattr(run_with_flags.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("boom")))
-    monkeypatch.setattr(run_with_flags, "write_stdout", stdout.append)
     monkeypatch.setattr(run_with_flags, "write_stderr", stderr.append)
 
     assert run_with_flags.main() == 1
-    assert stdout == ["payload"]
     assert any("Error running hook-id" in message for message in stderr)
 
 
@@ -158,7 +154,6 @@ def test_run_with_flags_emits_session_start_fallback_json_when_child_stdout_empt
 
 
 def test_run_with_flags_skips_disabled_hook_with_unbounded_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
-    stdout: list[str] = []
     payload = "payload-" + "x" * 1024
     calls: list[int] = []
 
@@ -187,10 +182,9 @@ def test_run_with_flags_skips_disabled_hook_with_unbounded_stdin(monkeypatch: py
         "run",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not run")),
     )
-    monkeypatch.setattr(run_with_flags, "write_stdout", stdout.append)
 
     assert run_with_flags.main() == 0
-    assert stdout == [payload]
+    # hook 無効時は stdin を読み捨てるだけで stdout には何も出さない
     assert calls == [-1]
 
 
@@ -482,7 +476,7 @@ def test_pre_bash_commit_quality_run_wrapper_and_main_success(monkeypatch: pytes
     with redirect_stdout(stdout):
         assert pre_bash_commit_quality.main() == 2
 
-    assert stdout.getvalue() == "payload"
+    assert stdout.getvalue() == ""
 
 
 def test_pre_bash_commit_quality_evaluate_handles_commit_branches(
@@ -818,18 +812,14 @@ def test_run_with_flags_build_env_and_resolve_command_branches(
     assert run_with_flags.resolve_target_command("bad-target", ["x"]) == [sys.executable, "-m", "bad-target", "x"]
 
 
-def test_run_with_flags_entrypoint_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    class DummyStdin:
-        def __init__(self) -> None:
-            self.buffer = io.BytesIO(b"payload")
-
-    monkeypatch.setattr(run_with_flags.sys, "stdin", DummyStdin())
+def test_run_with_flags_entrypoint_exits_one_when_no_args(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_with_flags.sys, "argv", ["run_with_flags.py"])
 
     with pytest.raises(SystemExit) as excinfo:
         runpy.run_module("devgear.hooks.run_with_flags", run_name="__main__")
 
-    assert excinfo.value.code == 0
+    # 引数不足時は exit 1 で終了する（stdin の読み取りは不要）
+    assert excinfo.value.code == 1
 
 
 def test_pre_bash_commit_quality_helpers_and_pass_branch(monkeypatch: pytest.MonkeyPatch) -> None:

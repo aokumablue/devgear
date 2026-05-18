@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -100,11 +101,17 @@ class PgDatabase:
     接続プールを使用し、複数接続の効率的な管理を行う。
     """
 
+    # 接続テスト失敗時のキャッシュ TTL（秒）。
+    # 成功時はキャッシュしない（毎回テストする）。
+    _PROBE_TTL: float = 300.0
+
     def __init__(self, postgres_url: str, *, use_pool: bool = True) -> None:
         self._url = postgres_url
         self._conn: psycopg.Connection | None = None
         self._pool = None
         self._use_pool = use_pool
+        # (result, cached_at) — 失敗時のみ設定する
+        self._probe_cache: tuple[bool, float] | None = None
 
     def _get_conn(self) -> psycopg.Connection:
         """接続を取得（遅延接続）。プールが有効なら ConnectionPool を使用。"""
@@ -155,19 +162,35 @@ class PgDatabase:
             self._conn = None
 
     def test_connection(self) -> bool:
-        """接続テスト。"""
+        """接続テスト。
+
+        失敗時は _PROBE_TTL 秒間キャッシュして ERROR ログを初回のみ出す。
+        成功時はキャッシュせず以降も毎回テストを行う。
+        """
+        # キャッシュヒット確認（失敗キャッシュのみ）
+        if self._probe_cache is not None:
+            result, cached_at = self._probe_cache
+            if not result and time.monotonic() - cached_at < self._PROBE_TTL:
+                return False
+
         conn = None
         try:
             conn = self._get_conn()
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
-                return cur.fetchone() is not None
+                ok = cur.fetchone() is not None
         except Exception as e:
             log.error("PostgreSQL 接続テスト失敗: %s", e)
+            # 失敗をキャッシュして TTL 内は再試行しない
+            self._probe_cache = (False, time.monotonic())
             return False
         finally:
             if conn:
                 self._put_conn(conn)
+
+        # 成功時はキャッシュを無効化して以降も毎回テストする
+        self._probe_cache = None
+        return ok
 
     # --- memory_chunks ---
 

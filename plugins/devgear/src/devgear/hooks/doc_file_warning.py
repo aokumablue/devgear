@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from devgear.hooks.hook_common import parse_json_object, read_raw_stdin, write_stderr, write_stdout
+from devgear.hooks.hook_common import parse_json_object, read_raw_stdin, write_stderr
 
 ADHOC_FILENAMES = re.compile(r"^(NOTES|TODO|SCRATCH|TEMP|DRAFT|BRAINSTORM|SPIKE|DEBUG|WIP)\.(md|txt)$")
 STRUCTURED_DIRS = re.compile(
@@ -67,7 +67,6 @@ def main() -> int:
                 "[Hook] Consider using a structured path (e.g. docs/, .claude/, skills/, .github/, .gitlab/, benchmarks/, templates)"
             )
 
-    write_stdout(raw)
     return 0
 
 

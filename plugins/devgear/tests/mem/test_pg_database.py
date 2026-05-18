@@ -648,3 +648,104 @@ class TestEnsureSsl:
         """localhost でも sslmode=prefer は許可しない（disable のみ例外）。"""
         with pytest.raises(ValueError, match="sslmode"):
             _ensure_ssl("postgresql://user@localhost/db?sslmode=prefer")
+
+
+class TestTestConnectionProbeCache:
+    """test_connection の TTL キャッシュ動作のテスト。"""
+
+    def _make_error_cursor(self) -> FakeCursor:
+        class _ErrorCursor(FakeCursor):
+            def execute(self, sql: str, params=None) -> None:  # noqa: ANN001
+                raise RuntimeError("connection refused")
+
+        return _ErrorCursor()
+
+    def test_failure_is_cached_within_ttl(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """失敗時は TTL 内に再試行せずキャッシュ値を返す。"""
+        call_count = 0
+
+        class CountingCursor(FakeCursor):
+            def execute(self, sql: str, params=None) -> None:  # noqa: ANN001
+                nonlocal call_count
+                call_count += 1
+                raise RuntimeError("boom")
+
+        conn = FakeConn(CountingCursor())
+        db = PgDatabase("postgres://example", use_pool=False)
+        monkeypatch.setattr(db, "_get_conn", lambda: conn)
+        monkeypatch.setattr(db, "_put_conn", lambda c: None)
+
+        # 1回目: 接続試行してキャッシュ
+        assert db.test_connection() is False
+        assert call_count == 1
+
+        # 2回目: TTL 内はキャッシュから返す（接続試行なし）
+        assert db.test_connection() is False
+        assert call_count == 1
+
+    def test_failure_cache_expires_after_ttl(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """TTL 経過後は再接続を試みる。"""
+        import time
+
+        call_count = 0
+
+        class CountingCursor(FakeCursor):
+            def execute(self, sql: str, params=None) -> None:  # noqa: ANN001
+                nonlocal call_count
+                call_count += 1
+                raise RuntimeError("boom")
+
+        conn = FakeConn(CountingCursor())
+        db = PgDatabase("postgres://example", use_pool=False)
+        monkeypatch.setattr(db, "_get_conn", lambda: conn)
+        monkeypatch.setattr(db, "_put_conn", lambda c: None)
+
+        # 1回目: 失敗してキャッシュ
+        assert db.test_connection() is False
+        assert call_count == 1
+
+        # TTL を過去に設定してキャッシュを期限切れにする
+        result, _ = db._probe_cache  # type: ignore[misc]
+        db._probe_cache = (result, time.monotonic() - db._PROBE_TTL - 1.0)
+
+        # 2回目: TTL 経過後は再試行する
+        assert db.test_connection() is False
+        assert call_count == 2
+
+    def test_success_clears_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """成功時はキャッシュをクリアして以降も毎回テストを行う。"""
+        call_count = 0
+
+        class CountingCursor(FakeCursor):
+            def __init__(self) -> None:
+                super().__init__(fetchone_result=(1,))
+
+            def execute(self, sql: str, params=None) -> None:  # noqa: ANN001
+                nonlocal call_count
+                call_count += 1
+
+        conn = FakeConn(CountingCursor())
+        db = PgDatabase("postgres://example", use_pool=False)
+        monkeypatch.setattr(db, "_get_conn", lambda: conn)
+        monkeypatch.setattr(db, "_put_conn", lambda c: None)
+
+        # 失敗キャッシュを事前に設定
+        import time
+        db._probe_cache = (False, time.monotonic())
+
+        # 成功するよう cursor を差し替え（キャッシュは失敗なので試行は行われない）
+        # ただし TTL 内なのでキャッシュを使う → False を返す
+        assert db.test_connection() is False
+        assert call_count == 0
+
+    def test_success_when_no_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """初回成功時はキャッシュなしで True を返しキャッシュも None のまま。"""
+        cursor = FakeCursor(fetchone_result=(1,))
+        conn = FakeConn(cursor)
+        db = PgDatabase("postgres://example", use_pool=False)
+        monkeypatch.setattr(db, "_get_conn", lambda: conn)
+        monkeypatch.setattr(db, "_put_conn", lambda c: None)
+
+        assert db.test_connection() is True
+        # 成功時はキャッシュしない
+        assert db._probe_cache is None

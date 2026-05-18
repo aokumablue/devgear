@@ -43,7 +43,7 @@ def test_launcher_runs_python_hook_and_preserves_payload() -> None:
     result = run_launcher("devgear.hooks.doc_file_warning", input_text=payload)
 
     assert result.returncode == 0
-    assert result.stdout == payload
+    assert result.stdout == ""
     assert "Ad-hoc documentation filename detected" in result.stderr
 
 
@@ -58,7 +58,7 @@ def test_run_with_flags_skips_disabled_hook() -> None:
     )
 
     assert result.returncode == 0
-    assert result.stdout == payload
+    assert result.stdout == ""
     assert result.stderr == ""
 
 
@@ -73,7 +73,7 @@ def test_run_with_flags_skips_disabled_hook_without_truncating_large_stdin() -> 
     )
 
     assert result.returncode == 0
-    assert result.stdout == payload
+    assert result.stdout == ""
     assert result.stderr == ""
 
 
@@ -88,7 +88,7 @@ def test_run_with_flags_propagates_blocked_hook() -> None:
     )
 
     assert result.returncode == 2
-    assert result.stdout == payload
+    assert result.stdout == ""
     assert "git hook bypass flags are not allowed" in result.stderr
 
 
@@ -238,7 +238,7 @@ def test_resolve_target_command_absolute_bash_script(tmp_path: Path) -> None:
     assert cmd == ["bash", str(script)]
 
 
-def test_resolve_target_command_relative_script_in_plugin_root(tmp_path: Path, monkeypatch) -> None:
+def test_resolve_target_command_relative_script_in_plugin_root(tmp_path: Path) -> None:
     """CLAUDE_PLUGIN_ROOT 内の相対パス スクリプトを解決します。"""
     # プラグインルート内にスクリプトを作成
     script = tmp_path / "subdir" / "script.py"
@@ -250,7 +250,7 @@ def test_resolve_target_command_relative_script_in_plugin_root(tmp_path: Path, m
     assert cmd == [sys.executable, str(script), "arg"]
 
 
-def test_resolve_target_command_relative_path_escapes_plugin_root(tmp_path: Path, monkeypatch) -> None:
+def test_resolve_target_command_relative_path_escapes_plugin_root(tmp_path: Path) -> None:
     """CLAUDE_PLUGIN_ROOT を逃脱する相対パスはモジュール名として扱われます。"""
     plugin_root = tmp_path / "plugin"
     plugin_root.mkdir(parents=True, exist_ok=True)
@@ -268,7 +268,7 @@ def test_resolve_target_command_relative_path_escapes_plugin_root(tmp_path: Path
     assert cmd == [sys.executable, "-m", escape_path, "arg"]
 
 
-def test_resolve_target_command_relative_nonexistent_path_as_module(monkeypatch) -> None:
+def test_resolve_target_command_relative_nonexistent_path_as_module() -> None:
     """存在しない相対パスはモジュール名として処理されます。"""
     plugin_root = Path("/nonexistent/plugin")
     # 存在しないパスはモジュール名として処理される

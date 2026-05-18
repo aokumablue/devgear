@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from devgear.hooks.hook_common import parse_json_object, read_raw_stdin, write_stderr, write_stdout
+from devgear.hooks.hook_common import parse_json_object, read_raw_stdin, write_stderr
 from devgear.hooks.quality_gate_presets import resolve_quality_gate_config
 from devgear.lib.core_utils import log
 
@@ -489,15 +489,15 @@ def _run_configured_rules(
     return handled
 
 
-def run(raw_input: str, action: str = "post-edit") -> str:
-    """quality-gate を実行し、入力をそのまま返す。
+def run(raw_input: str, action: str = "post-edit") -> None:
+    """quality-gate を実行する。
 
     Args:
         raw_input: hook の生入力です。
         action: 実行するアクション名です。
 
     Returns:
-        元の入力文字列を返します。
+        None
 
     Raises:
         例外は発生しません。
@@ -507,8 +507,6 @@ def run(raw_input: str, action: str = "post-edit") -> str:
     fp = _extract_file_path(input_data) or None
     config = load_config(file_path=fp)
     _run_configured_rules(normalized_action, raw_input, input_data, config)
-
-    return raw_input
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -529,15 +527,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         raw = read_raw_stdin()
-        output = run(raw, action=action)
-        write_stdout(output)
+        run(raw, action=action)
         return 0
     except Exception as err:  # noqa: BLE001 - hook must remain non-blocking
         log(f"[QualityGate] unexpected error: {err}")
-        try:
-            write_stdout(raw)  # type: ignore[name-defined]
-        except Exception:
-            pass
         return 0
 
 

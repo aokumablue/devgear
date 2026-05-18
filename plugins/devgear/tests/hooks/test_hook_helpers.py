@@ -64,7 +64,8 @@ def test_config_protection_allows_safe_file(monkeypatch: pytest.MonkeyPatch) -> 
     with redirect_stderr(stderr), redirect_stdout(stdout):
         assert config_protection.main() == 0
 
-    assert stdout.getvalue() == payload
+    # 許可時は stdout は空（パススルー不要）
+    assert stdout.getvalue() == ""
     assert stderr.getvalue() == ""
 
 
@@ -77,7 +78,8 @@ def test_doc_file_warning_main_warns_for_ad_hoc_documents(monkeypatch: pytest.Mo
     with redirect_stdout(stdout), redirect_stderr(stderr):
         assert doc_file_warning.main() == 0
 
-    assert stdout.getvalue() == payload
+    # 警告のみで stdout は空（パススルー不要）
+    assert stdout.getvalue() == ""
     assert "Ad-hoc documentation filename detected" in stderr.getvalue()
 
 

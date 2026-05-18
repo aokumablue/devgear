@@ -158,9 +158,8 @@ def main() -> int:
         例外は発生しません。
     """
     if len(sys.argv) < 3:
-        raw, _truncated = read_raw_stdin_with_truncation()
-        write_stdout(raw)
-        return 0
+        write_stderr("run_with_flags: 引数が不足しています (hook_id target が必要)\n")
+        return 1
 
     hook_id = sys.argv[1]
     target = sys.argv[2]
@@ -168,12 +167,12 @@ def main() -> int:
     target_args = sys.argv[4:] if len(sys.argv) > 4 else []
 
     if not is_hook_enabled(hook_id, profiles=profiles_csv):
+        # フック無効時は stdin を読み捨てて終了する（stdout は空のまま）。
         stdin_buffer = getattr(sys.stdin, "buffer", None)
         if stdin_buffer is not None:
-            raw = stdin_buffer.read().decode("utf-8", errors="replace")
+            stdin_buffer.read()
         else:
-            raw = sys.stdin.read()
-        write_stdout(raw)
+            sys.stdin.read()
         return 0
 
     raw, truncated = read_raw_stdin_with_truncation()
@@ -194,15 +193,13 @@ def main() -> int:
         )
     except OSError as err:
         write_stderr(f"[Hook] Error running {hook_id}: {err}\n")
-        write_stdout(raw)
         return 1
 
     if result.stdout:
         write_stdout(result.stdout)
     elif hook_id in SESSION_START_HOOK_IDS:
         write_stdout(emit_session_start_output())
-    else:
-        write_stdout(raw)
+    # SESSION_START_HOOK_IDS 以外は子が空 stdout を返した場合も stdout を出さない。
 
     if result.stderr:
         write_stderr(result.stderr)

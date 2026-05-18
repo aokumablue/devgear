@@ -53,7 +53,7 @@ class TestBlockNoVerify:
         stdout, stderr = _capture_io(monkeypatch, block_no_verify, payload)
 
         assert block_no_verify.main() == expected_code
-        assert stdout == ([] if blocked else [payload])
+        assert stdout == []
         assert bool(stderr) is blocked
 
 
@@ -99,7 +99,7 @@ class TestSessionEndMarker:
         stdout, stderr = _capture_io(monkeypatch, session_end_marker, payload)
 
         assert session_end_marker.main() == 0
-        assert stdout == [payload]
+        assert stdout == []
         assert stderr == []
 
 
@@ -436,7 +436,7 @@ class TestSessionEndMain:
         monkeypatch.setattr(session_end, "write_file", lambda path, content: writes.append((Path(path), content)))
 
         assert session_end.main() == 0
-        assert capsys.readouterr().out == json.dumps({"transcript_path": str(transcript_path)})
+        assert capsys.readouterr().out == ""
         assert writes[0][0] == sessions_dir / "2026-01-01-abc123-session.tmp"
         assert "Fix docs" in writes[0][1]
         assert "README.md" in writes[0][1]
@@ -495,7 +495,7 @@ class TestSessionEndMain:
         monkeypatch.setattr(session_end, "log", logs.append)
 
         assert session_end.main() == 0
-        assert capsys.readouterr().out == json.dumps({"transcript_path": str(transcript_path)})
+        assert capsys.readouterr().out == ""
         assert writes[0][0] == session_file
         assert "Fix docs" in writes[0][1]
         assert any(msg.startswith("[SessionEnd] Updated session file:") for msg in logs)
@@ -520,7 +520,7 @@ class TestSessionEndMain:
         monkeypatch.setattr(session_end, "log", logs.append)
 
         assert session_end.main() == 0
-        assert capsys.readouterr().out == json.dumps({"transcript_path": str(transcript_path)})
+        assert capsys.readouterr().out == ""
         assert any("Transcript not found" in message for message in logs)
         assert writes[0][0] == sessions_dir / "2026-01-01-abc123-session.tmp"
         assert "## 現在の状態" in writes[0][1]
@@ -546,7 +546,7 @@ class TestSessionEndMain:
         monkeypatch.setattr(session_end, "log", logs.append)
 
         assert session_end.main() == 0
-        assert capsys.readouterr().out == "{}"
+        assert capsys.readouterr().out == ""
         assert any("Failed to normalize header" in message for message in logs)
         assert writes[0][0] == session_file
 
@@ -598,7 +598,7 @@ class TestSessionEndMain:
         monkeypatch.setattr(session_end, "log", logs.append)
 
         assert session_end.main() == 0
-        assert capsys.readouterr().out == json.dumps({"transcript_path": str(transcript_path)})
+        assert capsys.readouterr().out == ""
         assert session_end.SUMMARY_START_MARKER in writes[0][1]
         assert "### 次回セッションへの引継ぎ" in writes[0][1]
         assert any("Updated session file" in message for message in logs)
