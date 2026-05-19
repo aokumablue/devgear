@@ -995,7 +995,7 @@ def get_test_command(project_root: str | Path) -> str | None:
     if (root / ".rspec").exists() or (root / "spec").is_dir():
         return "rspec"
     if (root / "test" / "test_helper.rb").exists():
-        return "rake test"
+        return "rails test"
     if (root / "Rakefile").exists():
         return "rake test"
 

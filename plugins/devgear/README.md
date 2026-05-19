@@ -4,7 +4,7 @@
 
 ---
 
-## 🚀 Commands (9)
+## 🚀 Commands (10)
 
 | コマンド | 用途 | 一言説明 |
 |---|---|---|
@@ -17,6 +17,7 @@
 | `/c-skillgen` | スキル作成 | リポジトリ固有入力収集→SKILL.md 生成→チューニング委譲 |
 | `/c-instinct` | インスティンクト管理 | プロンプトから自動推論（export/import/promote/prune/evolve）。明示サブコマンド指定も可 |
 | `/c-dashboard` | 利用率可視化 | 個人(SQLite)とチーム(PostgreSQL)の使用率比較 HTML ダッシュボード |
+| `/c-testmod` | テストコード自動生成 | デシジョンテーブル設計→承認→実装。言語非依存。差分 or 指定パス対応 |
 
 ---
 
@@ -270,6 +271,32 @@ flowchart LR
 
 ---
 
+### WF-11: c-testmod — テストコード自動生成
+
+```mermaid
+flowchart TD
+  classDef cmd    fill:#2563eb,stroke:#1e40af,color:#fff,rx:6
+  classDef skill  fill:#7c3aed,stroke:#6d28d9,color:#fff,rx:4
+
+  A(["/c-testmod [path]"]) --> B["s-grillme\n（設計方針確定）"]:::skill
+  B --> C["スコープ確定\ngit diff HEAD / 引数パス"]
+  C --> D["プロジェクト検出\nget_test_command()"]
+  D --> E["ベースライン取得\nカバレッジ測定"]
+  E --> F["デシジョンテーブル設計\n関数単位・ブランチ網羅"]
+  F --> G{"ユーザー承認"}
+  G -- 修正依頼 --> F
+  G -- 承認 --> H["テスト実装\n言語慣習に従う"]
+  H --> I["検証\ntest + coverage + lint"]
+  I --> J{"Gate"}
+  J -- PASS --> K(["要約レポート"])
+  J -- BLOCKED --> L(["失敗内容を報告\n自動修正しない"])
+```
+
+**トリガー**: テストコードの新規追加・カバレッジ補完
+**期待効果**: デシジョンテーブルによるブランチ網羅 → 承認後に自動実装
+
+---
+
 ## 🏗️ Architecture
 
 ```mermaid
@@ -280,7 +307,7 @@ flowchart TB
   classDef store  fill:#374151,stroke:#1f2937,color:#fff,rx:4
 
   subgraph user["👤 User Layer"]
-    CMD["Commands (9)"]:::cmd
+    CMD["Commands (10)"]:::cmd
   end
 
   subgraph internal["⚙️ Internal Layer"]
