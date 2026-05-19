@@ -77,7 +77,7 @@ skill-name/
 - `references/eval-workflow.md` — eval 実行・採点・viewer
 - `references/improvement-guide.md` — 改善ループ・盲検比較・説明文最適化
 - `references/schemas.md` — JSON 構造定義
-- `../../agents/a-grader.md` / `a-comparator.md` / `a-analyzer.md`
+- `devgear:a-grader` / `devgear:a-comparator` / `devgear:a-analyzer`
 
 ## 永続メモリ
 

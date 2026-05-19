@@ -54,5 +54,5 @@ record: `{"event_type": "plan", "content": "{計画サマリー}"}`
 
 ## 連携
 
-- 実装: `s-tdd` 自動発火 または `a-tdd` 明示起動
+- 実装: `s-tdd` 自動発火 または `devgear:a-tdd` 明示起動
 - 完成後: `/c-review`

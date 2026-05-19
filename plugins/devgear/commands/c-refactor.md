@@ -23,7 +23,7 @@ record: `{"event_type": "refactor", "content": "Scope: {scope}. Clean: {cleaned}
 
 - `s-refprep`（必須）: 対象分割・依存可視化・テストセット確定
 - `s-refrb`（必須）: ファイル単位リバート計画（Rollback Blueprint）生成
-- `a-reforch`（必須）: clean/simplify/perf/review の実行順・並列制御
+- `devgear:a-reforch`（必須）: clean/simplify/perf/review の実行順・並列制御
 
 `deps.from` / `deps.to` は `groups` 配列のインデックスを指す。
 
@@ -50,7 +50,7 @@ record: `{"event_type": "refactor", "content": "Scope: {scope}. Clean: {cleaned}
 
 simplify 全グループ完了後に開始。不要計算・重複I/O・N+1・過剰メモリアロケーションを優先改善。変更ごとにテスト→失敗時はリバート。
 
-## ステップ6: review + secure（並列, `a-reforch` から委譲）
+## ステップ6: review + secure（並列, `devgear:a-reforch` から委譲）
 
 以下を**同時起動**し結果を統合:
 - `devgear:a-review`: 品質・設計・保守性
@@ -78,7 +78,7 @@ Issues:     CRITICAL {c} / HIGH {h} / MEDIUM {m} / LOW {l}
 Final Gate: PASS / BLOCKED
 ```
 
-Issues は `a-review` と `a-secure` の統合件数。
+Issues は `devgear:a-review` と `devgear:a-secure` の統合件数。
 
 ## ルール
 
@@ -87,7 +87,7 @@ Issues は `a-review` と `a-secure` の統合件数。
 - CRITICAL/HIGH が残る状態では承認・コミットしない
 - 機能変更禁止（WHAT不変）。挙動変更の疑義がある変更は要確認として報告
 - 安全性に疑義がある変更はスキップし最終要約に記載
-- サブエージェント委譲必須（`a-reforch` 統括 → `a-clean` / `a-simplify` / `a-perf` / `a-review` / `a-secure`）
+- サブエージェント委譲必須（`devgear:a-reforch` 統括 → `devgear:a-clean` / `devgear:a-simplify` / `devgear:a-perf` / `devgear:a-review` / `devgear:a-secure`）
 
 ## 引数
 
