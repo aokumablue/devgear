@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from model_build.__main__ import _cmd_clean, _cmd_verify
+from model_build.__main__ import _cmd_clean, _cmd_download, _cmd_verify
 
 
 class TestCmdClean:
@@ -87,6 +87,18 @@ class TestCmdVerify:
         with patch("model_build.verify.verify", side_effect=FileNotFoundError("missing")):
             with pytest.raises(FileNotFoundError, match="missing"):
                 _cmd_verify(self._make_args(tmp_path))
+
+
+class TestCmdDownload:
+    """download サブコマンドのテスト。"""
+
+    def test_download_called_with_correct_args(self, tmp_path: Path) -> None:
+        """download_model_bundle() が正しい引数で呼ばれる。"""
+        args = argparse.Namespace(config=tmp_path / "onnx.json", out=tmp_path / "models")
+        with patch("model_build.download.download_model_bundle", return_value=0) as mock_download:
+            rc = _cmd_download(args)
+        assert rc == 0
+        mock_download.assert_called_once_with(args.config, args.out)
 
 
 class TestVerifyModuleMain:

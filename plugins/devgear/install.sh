@@ -237,10 +237,24 @@ install_user_python() {
   # editable install は --require-hashes と排他のため別途実行する
   pip_install_quiet --no-deps -e "${REPO_ROOT}"
 
-  # ONNX モデルが未生成の場合は HuggingFace から自前ビルドする（model.onnx 存在時はスキップ）
-  if [[ "${DEVGEAR_INSTALL_ONNX_ASYNC:-0}" == "1" ]]; then
-    # SessionStart フックから呼ばれた場合: バックグラウンドで起動して即リターン
-    if [[ ! -f "${HOME}/.devgear/models/model.onnx" ]]; then
+  # ONNX モデルは既存ファイルを最優先で使い、未生成なら外部配布 → 現行ビルドの順で解決する。
+  local model_target="${HOME}/.devgear/models"
+  local model_onnx="${model_target}/model.onnx"
+  local onnx_config="${SCRIPT_DIR}/onnx/onnx.json"
+  local src_dir="${SCRIPT_DIR}/src"
+
+  if [[ -f "${model_onnx}" ]]; then
+    echo "[devgear] ONNX model already present (skipping): ${model_onnx}"
+  elif PYTHONPATH="${src_dir}" "${PYTHON3}" -m model_build download --config "${onnx_config}" --out "${model_target}"; then
+    echo "[devgear] ONNX model downloaded: ${model_onnx}"
+  else
+    local download_status=$?
+    if [[ "${download_status}" != "3" ]]; then
+      exit "${download_status}"
+    fi
+
+    # config が disabled / 未設定なら、現行の生成処理へフォールバックする。
+    if [[ "${DEVGEAR_INSTALL_ONNX_ASYNC:-0}" == "1" ]]; then
       local bg_script="${SCRIPT_DIR}/onnx/_run_onnx_background.sh"
       if [[ ! -f "${bg_script}" ]]; then
         echo "[devgear] Warning: ONNX background script not found: ${bg_script}" >&2
@@ -251,13 +265,12 @@ install_user_python() {
           nohup setsid bash "${bg_script}" </dev/null >/dev/null 2>&1 &
         disown
       fi
+    else
+      # 手動実行: 従来どおり同期ビルド
+      # shellcheck source=onnx/_build_onnx_lib.sh
+      source "${SCRIPT_DIR}/onnx/_build_onnx_lib.sh"
+      build_onnx_if_missing "${model_target}" "fp16"
     fi
-  else
-    # 手動実行: 従来どおり同期ビルド
-    # shellcheck source=onnx/_build_onnx_lib.sh
-    source "${SCRIPT_DIR}/onnx/_build_onnx_lib.sh"
-    local model_target="${HOME}/.devgear/models"
-    build_onnx_if_missing "${model_target}" "fp16"
   fi
 
   # 既存 settings.json のセキュリティ移行（パスワード分離・sslmode 強制）
