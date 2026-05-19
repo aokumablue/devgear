@@ -7,5 +7,5 @@
   "hidden_size": 1024,
   "embedding_dim": 768,
   "tokenizer_max_length": 512,
-  "opset": 17
+  "opset": 18
 }

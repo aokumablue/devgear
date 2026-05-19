@@ -188,6 +188,8 @@ def main() -> None:
         elif args.command == "clean":
             _cmd_clean(args)
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         print(f"[ERROR] {exc}", file=sys.stderr)
         sys.exit(1)
 

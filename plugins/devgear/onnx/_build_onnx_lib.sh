@@ -24,13 +24,20 @@ build_onnx_impl() {
 
   mkdir -p "${log_dir}" "${model_target}"
 
-  if [[ ! -x "${build_python}" ]]; then
+  # requirements-build.txt のハッシュが変わった場合は venv を再作成して古いパッケージを除去する。
+  # これにより nvidia-nccl-cu12 など前回インストールの残留パッケージとの競合を防ぐ。
+  local req_hash_file="${build_venv}/.req-hash"
+  local current_hash
+  current_hash="$(sha256sum "${build_reqs}" | cut -d' ' -f1 2>/dev/null || echo '')"
+
+  if [[ ! -x "${build_python}" ]] || [[ "$(cat "${req_hash_file}" 2>/dev/null)" != "${current_hash}" ]]; then
     echo "[build] Creating build venv: ${build_venv}"
+    rm -rf "${build_venv}"
     python3 -m venv "${build_venv}"
   fi
 
   # ハッシュロックで PyPI レジストリ側改ざんを検知する（LS-1）
-  # 再生成: pip-compile --generate-hashes --allow-unsafe plugins/devgear/onnx/requirements-build.in -o plugins/devgear/onnx/requirements-build.txt
+  # 再生成: pip-compile --allow-unsafe --generate-hashes --output-file=plugins/devgear/onnx/requirements-build.txt plugins/devgear/onnx/requirements-build.in
   # run_quietly が利用可能なら使用し、なければ直接実行する（build_onnx_model.sh から直接呼ばれる場合）
   if declare -f run_quietly >/dev/null 2>&1; then
     run_quietly "${build_python}" -m pip install --quiet --disable-pip-version-check --upgrade pip
@@ -41,6 +48,8 @@ build_onnx_impl() {
     "${build_python}" -m pip install --quiet --disable-pip-version-check \
       --require-hashes -r "${build_reqs}"
   fi
+
+  echo "${current_hash}" > "${req_hash_file}"
 
   local build_args=("--quant" "${quant}" "--out" "${model_target}")
   if [[ -n "${revision}" ]]; then
